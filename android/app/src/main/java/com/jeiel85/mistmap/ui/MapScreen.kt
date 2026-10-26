@@ -171,21 +171,24 @@ fun MapScreen(
       )
     }
 
-    Row(
-      Modifier
-        .align(Alignment.BottomCenter)
-        .fillMaxWidth()
-        .onSizeChanged { size ->
-          // 위쪽은 "기록 모음" 줄까지 가린다
-          with(density) { vm.updateInsets((statusBarDp + TOP_BAR).value.toInt(), size.height.toDp().value.toInt()) }
-        }
-        .windowInsetsPadding(WindowInsets.navigationBars)
-        .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
-      verticalAlignment = Alignment.Bottom,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      TodayCard(todayM, status, Modifier.weight(1f))
-      RecordControls(status, onStart, onPause, onResume, onStop)
+    // 간단히 보기 동안에는 가려진 HUD를 구성에서 빼서 "기록 중" 깜빡임이 매 프레임 돌지 않게 한다
+    if (!simple) {
+      Row(
+        Modifier
+          .align(Alignment.BottomCenter)
+          .fillMaxWidth()
+          .onSizeChanged { size ->
+            // 위쪽은 "기록 모음" 줄까지 가린다
+            with(density) { vm.updateInsets((statusBarDp + TOP_BAR).value.toInt(), size.height.toDp().value.toInt()) }
+          }
+          .windowInsetsPadding(WindowInsets.navigationBars)
+          .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        TodayCard(todayM, status, Modifier.weight(1f))
+        RecordControls(status, onStart, onPause, onResume, onStop)
+      }
     }
 
     // 간단히 보기는 HUD까지 모두 덮어야 하므로 Box의 맨 마지막에 둔다
