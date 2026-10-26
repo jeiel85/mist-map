@@ -1,5 +1,6 @@
 import { createMapStyle } from './mapStyle.js';
 import { createFogLayer } from './fog.js';
+import { parseHistory, ImportError } from './importers.js';
 
 const maplibregl = window.maplibregl;
 
@@ -12,6 +13,9 @@ const RUN_SPEED = 75;
 const STROLL_SPEED = 22;
 const START = { lng: 127.0560, lat: 37.5446 }; // 성수동
 const STORAGE_KEY = 'mistmap:v1';
+const DEDUP_M = 18;              // 이 격자 칸에 이미 지점이 있으면 새로 찍지 않는다(적도 기준 m)
+const IMPORT_GAP_M = 1500;       // 가져온 기록에서 이보다 멀리 떨어진 두 점은 잇지 않는다(기록 공백·장거리 이동)
+const IMPORT_MAX_POINTS = 100000; // 한 번에 가져올 새 지점 상한 (localStorage 용량 보호)
 const EARTH_C = 40075016.686;
 
 // ---- 좌표 유틸 ----
@@ -90,20 +94,98 @@ function markCells(p) {
   }
 }
 
+const occupied = new Set();
+const dedupKey = (ll) => {
+  const k = EARTH_C / DEDUP_M;
+  return `${Math.floor(mercX(ll.lng) * k)},${Math.floor(mercY(ll.lat) * k)}`;
+};
+
 let revealCount = 0;
 function reveal(ll, born = now()) {
   const p = { lng: ll.lng, lat: ll.lat, mx: mercX(ll.lng), my: mercY(ll.lat), born };
   state.points.push(p);
+  occupied.add(dedupKey(p));
   markCells(p);
   if (revealCount++ % 3 === 0 && Math.abs(born - now()) < 0.1) spawnPuffs(ll);
   return p;
 }
 
+// 이미 밝힌 길을 다시 걸을 때는 지점을 쌓지 않는다
+let lastSample = null;
 function maybeReveal() {
-  const last = state.points[state.points.length - 1];
-  if (!last || distM(last, state.player) >= SAMPLE_SPACING_M) {
-    reveal(state.player);
-    scheduleSave();
+  if (lastSample && distM(lastSample, state.player) < SAMPLE_SPACING_M) return;
+  lastSample = { ...state.player };
+  if (occupied.has(dedupKey(state.player))) return;
+  reveal(state.player);
+  scheduleSave();
+}
+
+// ---- 기록 가져오기 ----
+async function importFiles(files) {
+  const formats = new Set();
+  const fresh = [];
+  const pending = new Set();
+  let addedM = 0, truncated = false;
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+
+  const collect = (q) => {
+    if (fresh.length >= IMPORT_MAX_POINTS) { truncated = true; return; }
+    const key = dedupKey(q);
+    if (occupied.has(key) || pending.has(key)) return;
+    pending.add(key);
+    fresh.push(q);
+  };
+
+  for (const file of files) {
+    let parsed;
+    try {
+      parsed = parseHistory(await file.text());
+    } catch (e) {
+      if (!(e instanceof ImportError)) console.error(e);
+      toast(e instanceof ImportError ? `${file.name}: ${e.message}` : `${file.name}을(를) 읽다가 문제가 생겼어요`);
+      continue;
+    }
+    formats.add(parsed.format);
+    for (const track of parsed.tracks) {
+      let prev = null;
+      for (const p of track) {
+        minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng);
+        minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
+        const d = prev ? distM(prev, p) : Infinity;
+        if (d <= IMPORT_GAP_M) {
+          addedM += d;
+          const steps = Math.max(1, Math.ceil(d / SAMPLE_SPACING_M));
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            collect({ lng: prev.lng + (p.lng - prev.lng) * t, lat: prev.lat + (p.lat - prev.lat) * t });
+          }
+        } else {
+          collect(p);
+        }
+        prev = p;
+      }
+    }
+  }
+  if (formats.size === 0) return;
+
+  setStroll(false);
+  state.follow = false;
+  map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 90, maxZoom: 16.2, duration: 1400 });
+
+  // 카메라가 도착할 즈음부터 기록 순서대로 안개가 쓸려 나간다
+  const areaBefore = state.cells.size;
+  const t0 = now() + 1.2;
+  fresh.forEach((q, i) => reveal(q, t0 + (2.6 * i) / fresh.length));
+  state.walkedM += addedM;
+  scheduleSave();
+
+  const label = [...formats].join(' · ');
+  if (fresh.length === 0) {
+    toast(`${label} 기록의 장소는 이미 모두 밝혀져 있어요`);
+  } else {
+    const km2 = ((state.cells.size - areaBefore) * CELL_M * CELL_M) / 1e6;
+    toast(`${label}에서 ${fresh.length.toLocaleString('ko-KR')}곳을 새로 밝혔어요 · +${km2.toFixed(2)} km²`
+      + (truncated ? ` (너무 커서 ${IMPORT_MAX_POINTS.toLocaleString('ko-KR')}곳까지만)` : ''));
   }
 }
 
@@ -324,6 +406,8 @@ $('btn-reset').addEventListener('click', () => {
   if (!confirm('지금까지 밝힌 지도를 모두 지우고 다시 안개로 덮을까요?')) return;
   state.points = [];
   state.cells.clear();
+  occupied.clear();
+  lastSample = null;
   state.walkedM = 0;
   state.origin = { ...state.player };
   reveal(state.player);
@@ -331,8 +415,46 @@ $('btn-reset').addEventListener('click', () => {
   toast('다시 안개 속으로…');
 });
 
+// 가져오기 시트 · 드래그 앤 드롭
+const sheet = $('import-sheet');
+const openSheet = () => { sheet.hidden = false; keys.clear(); $('import-drop').focus(); };
+const closeSheet = () => { sheet.hidden = true; };
+$('btn-import').addEventListener('click', openSheet);
+$('import-close').addEventListener('click', closeSheet);
+sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
+$('import-input').addEventListener('change', (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (files.length) { closeSheet(); importFiles(files); }
+});
+
+const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  document.body.classList.add('dragging');
+});
+window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener('dragleave', () => {
+  if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); }
+});
+window.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dragging');
+  closeSheet();
+  importFiles([...e.dataTransfer.files]);
+});
+
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
+  if (!sheet.hidden) {
+    if (e.code === 'Escape') closeSheet();
+    return;
+  }
   if (e.code.startsWith('Arrow') || ['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
     e.preventDefault();
     if (state.stroll) setStroll(false);
@@ -392,6 +514,6 @@ map.on('load', () => {
 });
 
 // ?debug: 개발 중 콘솔에서 시뮬레이션을 직접 돌릴 수 있게 노출
-if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map };
+if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles };
 
 map.on('error', (e) => console.warn('지도 오류', e.error ?? e));

@@ -1,0 +1,9 @@
+{
+  "name": "mist-map",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python -m http.server 5174",
+    "test": "node --test"
+  }
+}

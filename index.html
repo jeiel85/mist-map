@@ -41,6 +41,10 @@
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7.5"/></svg>
       <span>내 위치</span>
     </button>
+    <button class="btn" id="btn-import" title="다른 앱 기록 가져오기">
+      <svg viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4 14v4.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V14"/></svg>
+      <span>가져오기</span>
+    </button>
     <button class="btn" id="btn-reset" title="안개 다시 덮기">
       <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v4.5h4.5"/></svg>
       <span>초기화</span>
@@ -53,6 +57,47 @@
   </button>
 
   <div class="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 걷기 · <kbd>Shift</kbd> 달리기 · 지도 클릭으로 이동</div>
+  <div class="sheet-backdrop" id="import-sheet" hidden>
+    <section class="card sheet" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <button class="sheet-close" id="import-close" aria-label="닫기">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <h2 id="import-title">기록 가져오기</h2>
+      <p class="sheet-lead">다른 앱에 쌓아 둔 발자국으로 안개를 한꺼번에 걷어 내요.</p>
+
+      <label class="drop" id="import-drop" tabindex="0">
+        <input type="file" id="import-input" multiple accept=".gpx,.kml,.json,.geojson" />
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M14 33c-4.5 0-8-3.2-8-7.2S9.3 19 13.6 19c1.1-5.4 5.5-9 11-9 6.4 0 11 4.4 11.8 10 4.4.2 7.6 3.3 7.6 7 0 3.8-3.2 6-7 6" fill="#fffaf0"/><path d="M24 40V24m-6 5.5L24 24l6 5.5"/></svg>
+        <strong>파일을 끌어다 놓거나 눌러서 고르기</strong>
+        <span>GPX · KML · GeoJSON · 구글 타임라인 JSON (여러 개 가능)</span>
+      </label>
+
+      <details>
+        <summary>구글 지도 타임라인은 어떻게 받나요?</summary>
+        <ul>
+          <li><b>Android</b> — 휴대폰 설정 › 위치 › 위치 서비스 › 타임라인 › <em>타임라인 데이터 내보내기</em></li>
+          <li><b>iPhone</b> — 구글 지도 앱 › 프로필 › 내 타임라인 › 오른쪽 위 메뉴 › 위치 및 개인정보 보호 설정 › <em>타임라인 데이터 내보내기</em></li>
+          <li>예전 구글 테이크아웃의 <code>Records.json</code>과 월별 <code>Semantic Location History</code> 파일도 읽어요.</li>
+        </ul>
+        <p class="fine">메뉴 이름은 기기와 앱 버전에 따라 조금 다를 수 있어요.</p>
+      </details>
+      <details>
+        <summary>운동·기록 앱(GPX)은요?</summary>
+        <ul>
+          <li><b>Strava</b> — 활동 페이지 › 더 보기(⋯) › <em>GPX 내보내기</em></li>
+          <li><b>Garmin Connect</b> — 활동 › 톱니바퀴 › <em>GPX로 내보내기</em></li>
+          <li>그 밖의 러닝·등산·자전거 앱도 대부분 GPX 내보내기를 지원해요.</li>
+        </ul>
+      </details>
+
+      <p class="sheet-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        파일은 이 브라우저 안에서만 읽고, 어디에도 올리지 않아요.
+      </p>
+    </section>
+  </div>
+  <div id="drop-overlay" aria-hidden="true"><div>여기에 놓으면 안개가 걷혀요</div></div>
+
   <div id="toast" role="status"></div>
   <div id="fatal" hidden></div>
 

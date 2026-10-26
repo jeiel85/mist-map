@@ -104,6 +104,8 @@ void main() {
   // 경계를 감싸는 링: 경계 가까이 촘촘하고 멀어질수록 넓어진다
   float t = sqrt(max(D, 0.0) / 2.1) * 6.0;
   float ring = isoLine(t, 1.1 * u_dpr) * step(0.5, t) * (1.0 - smoothstep(0.5, 1.85, D)) * 0.75;
+  // 축소해서 링 간격이 몇 px로 좁아지면 굵은 띠로 뭉치지 않게 흐리게 지운다
+  ring *= smoothstep(3.0, 7.0, 1.0 / max(fwidth(t), 1e-5) / u_dpr);
 
   vec3 fogCol = paper;
   fogCol = mix(fogCol, SOFT_INK, terr);
