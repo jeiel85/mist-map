@@ -32,6 +32,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -61,25 +67,63 @@ fun MapScreen(
   onStop: () -> Unit,
   onImport: () -> Unit,
   onExport: () -> Unit,
+  onDim: (Boolean) -> Unit,
 ) {
   val status by vm.status.collectAsStateWithLifecycle()
   val imports by vm.imports.collectAsStateWithLifecycle()
   val busy by vm.busy.collectAsStateWithLifecycle()
   var showRecords by rememberSaveable { mutableStateOf(false) }
+  // 걷는 동안 간단히 보기(절전): 기록 중 1분 동안 손대지 않으면 들어가고, 누르면 지도로 돌아온다
+  var simple by rememberSaveable { mutableStateOf(false) }
+  var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
+  LaunchedEffect(status, lastTouch, simple, showRecords) {
+    if (status == Status.OFF) simple = false
+    if (status != Status.RECORDING || simple || showRecords) return@LaunchedEffect
+    delay(SIMPLE_AFTER_MS)
+    simple = true
+  }
+  LaunchedEffect(simple) { onDim(simple) }
+  DisposableEffect(Unit) { onDispose { onDim(false) } }
+  BackHandler(enabled = simple) { simple = false }
   val todayM by vm.todayM.collectAsStateWithLifecycle()
   val notice by vm.notice.collectAsStateWithLifecycle()
   val rendererError by vm.rendererError.collectAsStateWithLifecycle()
   val density = LocalDensity.current
   val statusBarDp = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
 
-  Box(Modifier.fillMaxSize().background(Mist.Night)) {
+  Box(
+    Modifier
+      .fillMaxSize()
+      .background(Mist.Night)
+      .pointerInput(Unit) {
+        // 소비하지 않고 지켜보기만 한다 (지도 조작은 그대로 WebView로 간다)
+        awaitPointerEventScope {
+          while (true) {
+            awaitPointerEvent(PointerEventPass.Initial)
+            lastTouch = System.currentTimeMillis()
+          }
+        }
+      },
+  ) {
     RendererView(
+      paused = simple,
       modifier = Modifier.fillMaxSize(),
       onConnected = vm::attach,
       onMessage = { vm.onRendererMessage(it.optString("type"), it.optString("message").ifEmpty { null }) },
     )
 
     rendererError?.let { RendererErrorCard(it, Modifier.align(Alignment.Center).padding(24.dp)) }
+
+    if (status != Status.OFF) {
+      TopPill(
+        label = "간단히 보기",
+        onClick = { simple = true },
+        modifier = Modifier
+          .align(Alignment.TopStart)
+          .windowInsetsPadding(WindowInsets.statusBars)
+          .padding(top = 10.dp, start = 16.dp),
+      )
+    }
 
     TopPill(
       label = "기록 모음",
@@ -143,10 +187,16 @@ fun MapScreen(
       TodayCard(todayM, status, Modifier.weight(1f))
       RecordControls(status, onStart, onPause, onResume, onStop)
     }
+
+    // 간단히 보기는 HUD까지 모두 덮어야 하므로 Box의 맨 마지막에 둔다
+    if (simple) {
+      SimpleWalkScreen(todayM, status, onExit = { simple = false; lastTouch = System.currentTimeMillis() })
+    }
   }
 }
 
 private val TOP_BAR = 56.dp
+private const val SIMPLE_AFTER_MS = 60_000L
 
 @Composable
 private fun TopPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
