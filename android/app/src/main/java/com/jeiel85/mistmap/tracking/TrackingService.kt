@@ -84,6 +84,12 @@ class TrackingService : LifecycleService() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     super.onStartCommand(intent, flags, startId)
+    // 꺼진 서비스로 알림 버튼(일시정지·끄기 등)이 늦게 도착하면 할 일이 없으니 바로 내린다.
+    // 그냥 두면 포그라운드도 아닌 서비스가 백그라운드에 붙잡혀 있게 된다.
+    if (intent?.action != ACTION_START && TrackingState.status.value == TrackingState.Status.OFF) {
+      stopSelf(startId)
+      return START_NOT_STICKY
+    }
     when (intent?.action) {
       ACTION_START -> begin()
       ACTION_PAUSE -> pause()
@@ -98,6 +104,7 @@ class TrackingService : LifecycleService() {
   private fun begin() {
     if (TrackingState.status.value != TrackingState.Status.OFF) return
     if (!hasLocationPermission()) {
+      // start()가 권한을 먼저 확인하므로, 그 사이 권한이 취소된 경우에만 온다
       Log.w(MistApp.TAG, "위치 권한 없이 기록을 시작하려 함")
       stopSelf()
       return
@@ -364,7 +371,21 @@ class TrackingService : LifecycleService() {
     fun intent(context: Context, action: String) =
       Intent(context, TrackingService::class.java).setAction(action)
 
-    fun start(context: Context) = ContextCompat.startForegroundService(context, intent(context, ACTION_START))
+    /**
+     * 위치 권한이 있을 때만 포그라운드 서비스로 시작한다. 권한 없이 시작하면 서비스가 startForeground를
+     * 부를 수 없어(위치 유형) Android 12+에서 ForegroundServiceDidNotStartInTimeException으로 앱이 죽는다.
+     * @return 시작했으면 true
+     */
+    fun start(context: Context): Boolean {
+      if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
+        PackageManager.PERMISSION_GRANTED
+      ) {
+        Log.w(MistApp.TAG, "위치 권한이 없어 기록을 시작하지 않음")
+        return false
+      }
+      ContextCompat.startForegroundService(context, intent(context, ACTION_START))
+      return true
+    }
 
     fun send(context: Context, action: String) {
       context.startService(intent(context, action))

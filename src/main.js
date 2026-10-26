@@ -638,6 +638,13 @@ map.on('load', () => {
     native.send({ type: 'error', message: e.message });
     return;
   }
+  // GPU가 컨텍스트를 잃었다 되찾으면(탭 전환·GPU 리셋) MapLibre는 스스로 복구하지만
+  // 우리 안개 레이어의 셰이더·버퍼는 옛 컨텍스트와 함께 사라지므로 새로 붙인다
+  map.on('webglcontextrestored', () => {
+    if (map.getLayer('mist')) map.removeLayer('mist');
+    map.addLayer(createFogLayer(frameForFog));
+    activeUntil = now() + 1;
+  });
 
   const t0 = now();
   if (APP) {

@@ -41,6 +41,7 @@ docs/               README 스크린샷, 앱 설계 문서
 ```bash
 npm start                          # http://localhost:5174 정적 서버
 node tools/app-mode.cjs            # 앱 모드(?app) 브리지 점검 (서버가 떠 있어야 함)
+node tools/context-loss.cjs        # WebGL 컨텍스트 손실·복구 뒤에도 안개가 그려지는지
 npm test                           # 파서 단위 테스트
 npm run e2e                        # 가져오기 흐름 점검 (서버가 떠 있어야 함)
 node tools/e2e-import.cjs https://jeiel85.github.io/mist-map/   # 배포본 점검
@@ -64,6 +65,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 에뮬레이터 검증: `adb emu geo fix <lng> <lat>`를 3초마다 6m씩 옮기며 걷고, `adb shell input keyevent KEYCODE_SLEEP`으로 화면을 끈다. 잠금 해제 스와이프가 지도를 끌어 따라가기가 풀릴 수 있다.
 - WebView 디버깅: 디버그 빌드는 원격 디버깅이 켜져 있다. `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` 후 CDP로 평가한다. 웹 콘솔은 logcat `MistMap` 태그로도 나온다.
 - 릴리스 서명: 업로드 키는 `android/.keystore/`(git 제외)에 있고(로컬 원본: 메인 체크아웃 `D:\Project\mist-map\android\.keystore\`), 백업은 `G:\내 드라이브\모바일 앱 개발\Mist Map\릴리즈 키스토어`. 비밀번호는 `release-signing.properties`에만 있다.
+
+- CI(`.github/workflows/ci.yml`): PR·main 푸시마다 `npm test`와 Android 단위 테스트·lint·디버그 빌드. 헤드리스 Chrome 점검(`tools/`)은 아직 로컬에서만.
 
 ## 관례
 

@@ -127,7 +127,7 @@ class MainActivity : ComponentActivity() {
       })
       return
     }
-    TrackingService.start(this)
+    if (!TrackingService.start(this)) vm.show(Notice("위치 권한이 있어야 걸은 길을 기록할 수 있어요."))
   }
 
   private fun openAppSettings() {
