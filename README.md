@@ -96,6 +96,8 @@ samples/          가져오기 시험용 샘플 기록
 
 모바일 앱으로 옮기기 전에 안개 표현의 느낌을 확정하기 위한 **프로토타입**입니다. 하루 종일 이어지는 배경 위치 기록, 배터리 최적화, 계정·동기화는 아직 없습니다.
 
+백그라운드 위치 기록 앱의 설계는 [docs/app-architecture.md](docs/app-architecture.md), 주요 결정은 [DECISIONS.md](DECISIONS.md)에 있습니다.
+
 ## 크레딧
 
 - 지도 데이터 © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
