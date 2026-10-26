@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
           onImport = { openRecord.launch(arrayOf("*/*")) },
           onExport = { createGpx.launch("mistmap-${LocalDate.now()}.gpx") },
           onDim = ::setDimmed,
+          onOpenBatterySettings = ::openAppSettings,
         )
       }
     }
@@ -99,7 +100,10 @@ class MainActivity : ComponentActivity() {
     val notify = Build.VERSION.SDK_INT < 33 ||
       ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
       PackageManager.PERMISSION_GRANTED
-    if (fine && notify) {
+    val activity = Build.VERSION.SDK_INT < 29 ||
+      ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) ==
+      PackageManager.PERMISSION_GRANTED
+    if (fine && notify && activity) {
       startRecording()
       return
     }
@@ -108,6 +112,8 @@ class MainActivity : ComponentActivity() {
       add(Manifest.permission.ACCESS_FINE_LOCATION)
       add(Manifest.permission.ACCESS_COARSE_LOCATION)
       if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+      // 가만히 있을 때 GPS를 끄는 데만 쓴다. 거부해도 기록은 된다 (M3)
+      if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACTIVITY_RECOGNITION)
     }
     permissionRequest.launch(wanted.toTypedArray())
   }

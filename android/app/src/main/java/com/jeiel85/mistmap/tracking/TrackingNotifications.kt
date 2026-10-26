@@ -25,7 +25,7 @@ class TrackingNotifications(private val context: Context) {
     context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
   }
 
-  fun build(status: TrackingState.Status, todayM: Double): Notification {
+  fun build(status: TrackingState.Status, todayM: Double, warning: String? = null): Notification {
     val km = String.format(Locale.KOREA, "%.1f", todayM / 1000)
     val paused = status == TrackingState.Status.PAUSED
     val open = PendingIntent.getActivity(
@@ -36,7 +36,7 @@ class TrackingNotifications(private val context: Context) {
     return NotificationCompat.Builder(context, CHANNEL)
       .setSmallIcon(R.drawable.ic_notification)
       .setContentTitle(if (paused) "잠시 멈춤" else "안개를 걷는 중")
-      .setContentText("오늘 ${km}km")
+      .setContentText(listOfNotNull("오늘 ${km}km", warning).joinToString(" · "))
       .setContentIntent(open)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
@@ -52,12 +52,12 @@ class TrackingNotifications(private val context: Context) {
       .build()
   }
 
-  fun show(status: TrackingState.Status, todayM: Double) {
+  fun show(status: TrackingState.Status, todayM: Double, warning: String? = null) {
     // 알림 권한이 없어도 서비스는 돈다. 알림만 보이지 않을 뿐이다.
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
       PackageManager.PERMISSION_GRANTED && android.os.Build.VERSION.SDK_INT >= 33
     ) return
-    NotificationManagerCompat.from(context).notify(ID, build(status, todayM))
+    NotificationManagerCompat.from(context).notify(ID, build(status, todayM, warning))
   }
 
   private fun action(action: String, code: Int) = PendingIntent.getService(

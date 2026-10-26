@@ -68,11 +68,19 @@ fun MapScreen(
   onImport: () -> Unit,
   onExport: () -> Unit,
   onDim: (Boolean) -> Unit,
+  onOpenBatterySettings: () -> Unit,
 ) {
   val status by vm.status.collectAsStateWithLifecycle()
   val imports by vm.imports.collectAsStateWithLifecycle()
   val busy by vm.busy.collectAsStateWithLifecycle()
   var showRecords by rememberSaveable { mutableStateOf(false) }
+  val openRecordsRequest by vm.openRecordsRequest.collectAsStateWithLifecycle()
+  LaunchedEffect(openRecordsRequest) {
+    if (openRecordsRequest) {
+      showRecords = true
+      vm.openRecordsRequest.value = false
+    }
+  }
   // 걷는 동안 간단히 보기(절전): 기록 중 1분 동안 손대지 않으면 들어가고, 누르면 지도로 돌아온다
   var simple by rememberSaveable { mutableStateOf(false) }
   var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -168,6 +176,9 @@ fun MapScreen(
         onExport = { showRecords = false; onExport() },
         onUndo = vm::undoImport,
         onDismiss = { showRecords = false },
+        diagnostics = vm.diagnostics(),
+        batteryRestricted = vm.batteryRestricted(),
+        onOpenBatterySettings = onOpenBatterySettings,
       )
     }
 

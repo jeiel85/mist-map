@@ -21,7 +21,11 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.jeiel85.mistmap.MistApp
 import com.jeiel85.mistmap.data.todayDistance
+import com.jeiel85.mistmap.reveal.Geo
+import com.jeiel85.mistmap.reveal.LatLng
 import com.jeiel85.mistmap.reveal.RevealTrail
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
@@ -39,6 +43,9 @@ import java.util.concurrent.TimeUnit
 class TrackingService : LifecycleService() {
   private sealed interface Event {
     data class Located(val fix: Fix) : Event
+    data class Sensed(val activity: SensedActivity, val entered: Boolean) : Event
+    /** 쉬는 동안 확인한 위치가 멀리 옮겨졌다 */
+    data object Wake : Event
     data object Stop : Event
   }
 
@@ -51,6 +58,12 @@ class TrackingService : LifecycleService() {
   private val filter = LocationFilter()
   private val motion = MotionClassifier()
   private val trail = RevealTrail()
+  private val policy = MotionPolicy()
+  private val diagnostics by lazy { Diagnostics(this) }
+  private var planSince = 0L
+  private var lastRawAt = 0L
+  private var gapping = false
+  private var sleepWatch: Job? = null
   private var sessionId: Long? = null
   private var sessionDay: LocalDate? = null
   private var lastFixAt = 0L
@@ -100,15 +113,28 @@ class TrackingService : LifecycleService() {
     TrackingState.interrupted.value = false
     lastMovementAt = System.currentTimeMillis()
 
+    TrackingState.warning.value = null
+
     lifecycleScope.launch {
       app.startup.await()
       filter.reset(null)
       motion.reset()
       trail.reset()
-      requestUpdates(MotionMode.WALKING)
+      policy.reset()
+      val now = System.currentTimeMillis()
+      planSince = now
+      lastRawAt = now
+      requestUpdates(LocationPlan.WALKING)
+      if (ActivityTransitions.start(this@TrackingService)) Log.i(MistApp.TAG, "활동 인식 켬")
       for (event in events) {
         when (event) {
           is Event.Located -> handle(event.fix)
+          is Event.Sensed -> if (isRecording()) decide { policy.onActivity(event.activity, event.entered) }
+          Event.Wake -> if (isRecording()) {
+            Log.i(MistApp.TAG, "쉬는 중 위치가 옮겨져 깨움")
+            motion.reset()
+            decide { policy.wake() }
+          }
           Event.Stop -> {
             finish()
             break
@@ -117,19 +143,32 @@ class TrackingService : LifecycleService() {
       }
     }
     lifecycleScope.launch {
+      TrackingState.activity.collect { (activity, entered) -> events.trySend(Event.Sensed(activity, entered)) }
+    }
+    lifecycleScope.launch {
       // 알림은 0.1km 단위로 보이므로 그 값이 바뀔 때만 다시 게시한다 (위치마다 게시하면 30분에 120번 넘게 깨움)
-      combine(TrackingState.status, repo.todayDistance()) { status, m -> status to (m / 100).toLong() }
+      combine(TrackingState.status, repo.todayDistance(), TrackingState.warning) { status, m, warning ->
+        Triple(status, (m / 100).toLong(), warning)
+      }
         .distinctUntilChanged()
-        .collect { (status, hm) -> if (status != TrackingState.Status.OFF) notifications.show(status, hm * 100.0) }
+        .collect { (status, hm, warning) ->
+          if (status != TrackingState.Status.OFF) notifications.show(status, hm * 100.0, warning)
+        }
     }
     lifecycleScope.launch { watchForAutoStop() }
+    lifecycleScope.launch { watchHealth() }
   }
 
   private suspend fun handle(fix: Fix) {
-    if (TrackingState.status.value != TrackingState.Status.RECORDING) return
+    if (!isRecording()) return
+    lastRawAt = System.currentTimeMillis()
+    if (gapping) {
+      gapping = false
+      TrackingState.warning.value = null
+    }
     motion.offer(fix)?.let { mode ->
       Log.i(MistApp.TAG, "이동 상태: $mode")
-      requestUpdates(mode)
+      decide { policy.onSpeedMode(mode) }
     }
     val result = filter.offer(fix)
     if (result !is FilterResult.Accepted) return
@@ -161,9 +200,12 @@ class TrackingService : LifecycleService() {
   }
 
   private fun pause() {
-    if (TrackingState.status.value != TrackingState.Status.RECORDING) return
+    if (!isRecording()) return
+    account()
     fused.removeLocationUpdates(callback)
+    sleepWatch?.cancel()
     TrackingState.status.value = TrackingState.Status.PAUSED
+    TrackingState.warning.value = null
   }
 
   private fun resume() {
@@ -173,10 +215,72 @@ class TrackingService : LifecycleService() {
     filter.reset(null)
     motion.reset()
     trail.reset()
-    requestUpdates(MotionMode.WALKING)
+    policy.reset()
+    planSince = System.currentTimeMillis()
+    lastRawAt = planSince
+    requestUpdates(LocationPlan.WALKING)
+  }
+
+  private fun isRecording() = TrackingState.status.value == TrackingState.Status.RECORDING
+
+  /** 지금 방식으로 보낸 시간을 오늘 기록 상태에 더한다 */
+  private fun account(now: Long = System.currentTimeMillis()) {
+    if (isRecording()) diagnostics.addTime(policy.plan, now - planSince, now)
+    planSince = now
+  }
+
+  /** 앞 방식의 시간을 먼저 센 뒤 [MotionPolicy]에 묻고, 방식이 바뀌었으면 위치 요청을 바꾼다 */
+  private fun decide(change: () -> LocationPlan?) {
+    account()
+    val plan = change() ?: return
+    Log.i(MistApp.TAG, "위치 요청 방식: $plan")
+    requestUpdates(plan)
+  }
+
+  /** 30초마다: 오늘 기록 상태를 쌓고, 위치가 2분 넘게 안 오면 알린다 */
+  private suspend fun watchHealth() {
+    while (true) {
+      delay(30_000)
+      if (!isRecording()) continue
+      val now = System.currentTimeMillis()
+      account(now)
+      val limit = if (policy.plan == LocationPlan.STILL_GPS) STILL_GAP_MS else GAP_MS
+      if (policy.plan != LocationPlan.SLEEP && !gapping && now - lastRawAt > limit) {
+        gapping = true
+        diagnostics.addGap(now)
+        TrackingState.warning.value = "위치를 받지 못하고 있어요"
+        Log.w(MistApp.TAG, "위치가 ${(now - lastRawAt) / 1000}초째 안 옴")
+      }
+    }
+  }
+
+  /** 쉬는 동안(GPS 끔) 10분마다 위치를 한 번만 확인해, 활동 인식이 놓친 이동을 잡는다 */
+  @SuppressLint("MissingPermission") // hasLocationPermission()으로 확인
+  private fun watchWhileSleeping() {
+    sleepWatch?.cancel()
+    sleepWatch = lifecycleScope.launch {
+      while (true) {
+        delay(SLEEP_CHECK_MS)
+        if (!hasLocationPermission() || !isRecording()) continue
+        val here = try {
+          fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+        } catch (e: Exception) {
+          Log.w(MistApp.TAG, "쉬는 중 위치 확인 실패", e)
+          null
+        } ?: continue
+        val last = TrackingState.lastFix.value ?: continue
+        if (Geo.distanceM(last.latLng, LatLng(here.latitude, here.longitude)) > WAKE_DISTANCE_M) {
+          events.trySend(Event.Wake)
+        }
+      }
+    }
   }
 
   private suspend fun finish() {
+    account()
+    sleepWatch?.cancel()
+    ActivityTransitions.stop(this)
+    TrackingState.warning.value = null
     fused.removeLocationUpdates(callback)
     sessionId?.let { repo.endSession(it, lastFixAt.takeIf { t -> t > 0 } ?: System.currentTimeMillis()) }
     sessionId = null
@@ -201,22 +305,33 @@ class TrackingService : LifecycleService() {
   }
 
   @SuppressLint("MissingPermission") // hasLocationPermission()으로 확인
-  private fun requestUpdates(mode: MotionMode) {
+  private fun requestUpdates(plan: LocationPlan) {
     if (!hasLocationPermission()) {
       events.trySend(Event.Stop)
       return
     }
-    val request = when (mode) {
-      MotionMode.WALKING -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000)
+    val request = when (plan) {
+      LocationPlan.WALKING -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000)
         .setMinUpdateIntervalMillis(2_000)
         .build()
       // 저전력 위치는 정확도 필터(35m)에 걸러지므로 빠른 이동에도 고정밀을 쓰되 간격을 늘린다
-      MotionMode.FAST -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 30_000).build()
-      // 저전력(와이파이·기지국) 위치는 그것이 없는 곳(지하·외곽·데이터 꺼짐, 에뮬레이터)에서 아예 오지 않아
+      LocationPlan.FAST -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 30_000).build()
+      // 활동 인식이 없을 때의 멈춤. 저전력(와이파이·기지국) 위치는 그것이 없는 곳에서 아예 오지 않아
       // 다시 걷기 시작해도 멈춤에서 빠져나오지 못한다. GPS를 쓰되 1분 간격으로 띄엄띄엄 받는다.
-      MotionMode.STILL -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 60_000).build()
+      LocationPlan.STILL_GPS -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 60_000).build()
+      // 활동 인식이 정지라고 할 때: GPS를 끄고 가끔 한 번만 확인한다
+      LocationPlan.SLEEP -> null
     }
     fused.removeLocationUpdates(callback)
+    if (request == null) {
+      // 일부러 GPS를 끈 것이니 "위치를 못 받음" 경고는 내린다
+      gapping = false
+      TrackingState.warning.value = null
+      watchWhileSleeping()
+      return
+    }
+    sleepWatch?.cancel()
+    lastRawAt = System.currentTimeMillis() // 쉬다 깨어나면 끊김 시간을 새로 잰다
     fused.requestLocationUpdates(request, callback, Looper.getMainLooper())
       .addOnFailureListener { e ->
         Log.e(MistApp.TAG, "위치 요청 실패", e)
@@ -230,6 +345,7 @@ class TrackingService : LifecycleService() {
 
   override fun onDestroy() {
     fused.removeLocationUpdates(callback)
+    ActivityTransitions.stop(this)
     TrackingState.status.value = TrackingState.Status.OFF
     super.onDestroy()
   }
@@ -239,6 +355,11 @@ class TrackingService : LifecycleService() {
     const val ACTION_PAUSE = "com.jeiel85.mistmap.PAUSE"
     const val ACTION_RESUME = "com.jeiel85.mistmap.RESUME"
     const val ACTION_STOP = "com.jeiel85.mistmap.STOP"
+
+    private const val GAP_MS = 2 * 60_000L
+    private const val STILL_GAP_MS = 3 * 60_000L
+    private const val SLEEP_CHECK_MS = 10 * 60_000L
+    private const val WAKE_DISTANCE_M = 100.0
 
     fun intent(context: Context, action: String) =
       Intent(context, TrackingService::class.java).setAction(action)
