@@ -64,7 +64,7 @@ fun MapScreen(
   val density = LocalDensity.current
   val statusBarDp = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
 
-  Box(Modifier.fillMaxSize().background(Mist.Paper)) {
+  Box(Modifier.fillMaxSize().background(Mist.Night)) {
     RendererView(
       modifier = Modifier.fillMaxSize(),
       onConnected = vm::attach,
@@ -105,22 +105,22 @@ fun MapScreen(
 
 @Composable
 private fun TodayCard(todayM: Double, status: Status, modifier: Modifier = Modifier) {
-  InkBox(modifier) {
+  GlowBox(modifier) {
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 10.dp)) {
       StatusLine(status)
       Row(verticalAlignment = Alignment.Bottom) {
         Text(
           String.format(Locale.KOREA, "%.2f", todayM / 1000),
-          style = TextStyle(fontFamily = Mist.Hand, fontSize = 40.sp, lineHeight = 40.sp, color = Mist.Ink),
+          style = TextStyle(fontFamily = Mist.Hand, fontSize = 40.sp, lineHeight = 40.sp, color = Mist.Moon),
         )
         Spacer(Modifier.width(4.dp))
         Text(
           "km",
-          style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.InkSoft),
+          style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.MoonSoft),
           modifier = Modifier.padding(bottom = 4.dp),
         )
       }
-      Text("오늘 걸은 거리", fontSize = 12.sp, color = Mist.InkSoft)
+      Text("오늘 걸은 거리", fontSize = 12.sp, color = Mist.MoonSoft)
     }
   }
 }
@@ -128,9 +128,9 @@ private fun TodayCard(todayM: Double, status: Status, modifier: Modifier = Modif
 @Composable
 private fun StatusLine(status: Status) {
   val (label, color) = when (status) {
-    Status.RECORDING -> "기록 중" to Mist.Pink
-    Status.PAUSED -> "잠시 멈춤" to Mist.Yellow
-    Status.OFF -> "기록 꺼짐" to Mist.InkSoft.copy(alpha = 0.5f)
+    Status.RECORDING -> "기록 중" to Mist.Firefly
+    Status.PAUSED -> "잠시 멈춤" to Mist.Pink
+    Status.OFF -> "기록 꺼짐" to Mist.MoonSoft.copy(alpha = 0.5f)
   }
   val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
     initialValue = 1f,
@@ -146,7 +146,7 @@ private fun StatusLine(status: Status) {
         .background(color, CircleShape),
     )
     Spacer(Modifier.width(6.dp))
-    Text(label, fontSize = 12.sp, color = Mist.Ink)
+    Text(label, fontSize = 12.sp, color = Mist.Moon)
   }
 }
 
@@ -160,27 +160,32 @@ private fun RecordControls(
 ) {
   Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
     when (status) {
-      Status.OFF -> HandButton("기록 켜기", Mist.Yellow, onStart, big = true)
+      Status.OFF -> HandButton("기록 켜기", onStart, primary = true, big = true)
       Status.RECORDING -> {
-        HandButton("멈춤", Mist.PaperHi, onPause)
-        HandButton("끄기", Mist.PaperHi, onStop)
+        HandButton("멈춤", onPause)
+        HandButton("끄기", onStop)
       }
       Status.PAUSED -> {
-        HandButton("다시 걷기", Mist.Yellow, onResume)
-        HandButton("끄기", Mist.PaperHi, onStop)
+        HandButton("다시 걷기", onResume, primary = true)
+        HandButton("끄기", onStop)
       }
     }
   }
 }
 
 @Composable
-private fun HandButton(label: String, fill: Color, onClick: () -> Unit, big: Boolean = false) {
+// primary: 반딧불 빛으로 채운 주 버튼, 아니면 반투명 남색 버튼
+private fun HandButton(label: String, onClick: () -> Unit, primary: Boolean = false, big: Boolean = false) {
   val shape = RoundedCornerShape(999.dp)
-  InkBox(shape = shape, fill = fill) {
+  GlowBox(
+    shape = shape,
+    fill = if (primary) Mist.Firefly else Mist.Card,
+    border = if (primary) Color.Transparent else Mist.Line,
+  ) {
     Text(
       label,
       textAlign = TextAlign.Center,
-      style = TextStyle(fontFamily = Mist.Hand, fontSize = if (big) 26.sp else 20.sp, color = Mist.Ink),
+      style = TextStyle(fontFamily = Mist.Hand, fontSize = if (big) 26.sp else 20.sp, color = if (primary) Mist.OnFirefly else Mist.Moon),
       modifier = Modifier
         .clickable(role = Role.Button, onClick = onClick)
         .padding(horizontal = if (big) 22.dp else 18.dp, vertical = if (big) 12.dp else 6.dp),
@@ -196,7 +201,7 @@ private fun NoticePill(notice: Notice, onDismiss: () -> Unit) {
   }
   Row(
     Modifier
-      .background(Mist.Ink, RoundedCornerShape(999.dp))
+      .background(Mist.Moon, RoundedCornerShape(999.dp))
       .clickable {
         notice.action?.invoke()
         onDismiss()
@@ -204,23 +209,23 @@ private fun NoticePill(notice: Notice, onDismiss: () -> Unit) {
       .padding(horizontal = 18.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    Text(notice.text, color = Mist.PaperHi, fontSize = 14.sp, modifier = Modifier.weight(1f, fill = false))
+    Text(notice.text, color = Mist.Night, fontSize = 14.sp, modifier = Modifier.weight(1f, fill = false))
     notice.actionLabel?.let {
       Spacer(Modifier.width(12.dp))
-      Text(it, style = TextStyle(fontFamily = Mist.Hand, fontSize = 18.sp, color = Mist.Yellow))
+      Text(it, style = TextStyle(fontFamily = Mist.Hand, fontSize = 18.sp, color = Color(0xFFB0741C)))
     }
   }
 }
 
 @Composable
 private fun RendererErrorCard(message: String, modifier: Modifier = Modifier) {
-  InkBox(modifier) {
+  GlowBox(modifier) {
     Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-      Text("지도를 그리지 못했어요", style = TextStyle(fontFamily = Mist.Hand, fontSize = 24.sp, color = Mist.Ink))
+      Text("지도를 그리지 못했어요", style = TextStyle(fontFamily = Mist.Hand, fontSize = 24.sp, color = Mist.Firefly))
       Spacer(Modifier.size(4.dp))
-      Text("인터넷 연결을 확인해 주세요. 기록은 그대로 이어져요.", fontSize = 13.sp, color = Mist.Ink, textAlign = TextAlign.Center)
+      Text("인터넷 연결을 확인해 주세요. 기록은 그대로 이어져요.", fontSize = 13.sp, color = Mist.Moon, textAlign = TextAlign.Center)
       Spacer(Modifier.size(6.dp))
-      Text(message, fontSize = 11.sp, color = Mist.InkSoft, textAlign = TextAlign.Center)
+      Text(message, fontSize = 11.sp, color = Mist.MoonSoft, textAlign = TextAlign.Center)
     }
   }
 }

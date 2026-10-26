@@ -1,24 +1,24 @@
-// 손그림 일러스트 느낌의 지도 스타일 (OpenFreeMap · OpenMapTiles 스키마)
-// 라벨 없이 면·선만으로 구성해 안개가 걷혔을 때 그림책처럼 보이도록 한다.
+// 등불에 비친 밤 동네 지도 스타일 (OpenFreeMap · OpenMapTiles 스키마)
+// 라벨 없이 면·선만으로 구성하고, 반딧불 빛이 닿은 곳처럼 따뜻한 살구·복숭아 톤으로 칠한다.
 
-export const INK = '#3d342b';
+export const INK = '#4a3b5c'; // 밤의 자두빛 선
 
 const PALETTE = {
-  land: '#f9f0dc',
-  residential: '#f5e9cf',
-  grass: '#dde6b6',
-  wood: '#cbdba0',
-  park: '#d5e2a8',
-  parkEdge: '#8fa36a',
-  water: '#bcdcd9',
-  waterEdge: '#5f8f8f',
-  road: '#fffaf0',
-  path: '#e58f8f',
-  rail: '#7a6a58',
-  buildingShadow: '#e0cfae',
-  buildingYellow: '#f6cd6a',
-  buildingButter: '#f8dc93',
-  buildingTall: '#e9e0cc',
+  land: '#fcefe0',
+  residential: '#f8e6d4',
+  grass: '#d3e6c4',
+  wood: '#bcd8b0',
+  park: '#c9e2b8',
+  parkEdge: '#7da77a',
+  water: '#acd2ea',
+  waterEdge: '#5b86b0',
+  road: '#fffaf3',
+  path: '#eaa53e',
+  rail: '#7a6a88',
+  buildingShadow: '#e7cdbd',
+  buildingPeach: '#f7b79b',
+  buildingApricot: '#f9cfa8',
+  buildingTall: '#ddd3ea',
 };
 
 const roadWidth = (base) => [
@@ -34,7 +34,7 @@ const MINOR = ['minor', 'service', 'street', 'residential'];
 export function createMapStyle() {
   return {
     version: 8,
-    name: 'mist-map-paper',
+    name: 'mist-map-lantern',
     sources: {
       omt: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' },
     },
@@ -78,7 +78,7 @@ export function createMapStyle() {
         paint: { 'line-color': PALETTE.waterEdge, 'line-width': 1.2, 'line-opacity': 0.6 },
       },
 
-      // 도로: 잉크 테두리(casing) 위에 크림색 채움
+      // 도로: 자두빛 테두리(casing) 위에 크림색 채움
       {
         id: 'road-minor-casing', type: 'line', source: 'omt', 'source-layer': 'transportation',
         filter: ['in', ['get', 'class'], ['literal', MINOR]],
@@ -119,7 +119,7 @@ export function createMapStyle() {
         paint: { 'line-color': PALETTE.rail, 'line-width': 1.4, 'line-dasharray': [4, 3] },
       },
 
-      // 건물: 살짝 어긋난 그림자 + 노란 채움 + 잉크 외곽선
+      // 건물: 살짝 어긋난 그림자 + 복숭아·살구 채움 + 자두빛 외곽선
       {
         id: 'building-shadow', type: 'fill', source: 'omt', 'source-layer': 'building', minzoom: 14,
         paint: {
@@ -133,8 +133,8 @@ export function createMapStyle() {
           'fill-color': [
             'case',
             ['>', ['coalesce', ['get', 'render_height'], 0], 30], PALETTE.buildingTall,
-            ['==', ['%', ['to-number', ['id'], 0], 3], 1], PALETTE.buildingButter,
-            PALETTE.buildingYellow,
+            ['==', ['%', ['to-number', ['id'], 0], 3], 1], PALETTE.buildingApricot,
+            PALETTE.buildingPeach,
           ],
         },
       },

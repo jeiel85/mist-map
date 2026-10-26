@@ -267,15 +267,19 @@ function frameForFog() {
 // ---- 캐릭터 · 핀 · 안개 조각 ----
 const heroEl = document.createElement('div');
 heroEl.className = 'hero';
+// 반딧불 '반디': 꼬리 등불로 밤안개를 밝힌다
 heroEl.innerHTML = `
-  <div class="hero-shadow"></div>
+  <div class="hero-light"></div>
   <div class="hero-body">
+    <span class="wing l"></span><span class="wing r"></span>
+    <span class="antenna l"></span><span class="antenna r"></span>
+    <div class="hero-lamp"></div>
+    <div class="hero-shell"></div>
     <div class="hero-face">
       <span class="eye"></span><span class="eye"></span>
       <span class="blush"></span><span class="blush"></span>
       <span class="mouth"></span>
     </div>
-    <span class="sprout"></span>
   </div>`;
 const hero = new maplibregl.Marker({ element: heroEl, anchor: 'bottom' })
   .setLngLat([state.player.lng, state.player.lat]).addTo(map);
@@ -287,17 +291,17 @@ pinEl.innerHTML = '<div class="pin-head"></div><div class="pin-dot"></div>';
 const pin = new maplibregl.Marker({ element: pinEl, anchor: 'bottom' });
 
 function spawnPuffs(ll) {
-  for (let i = 0; i < 3; i++) {
+  // 반딧불 불티가 위로 흩날린다
+  for (let i = 0; i < 5; i++) {
     // 마커 엘리먼트의 transform은 MapLibre가 위치용으로 쓰므로 애니메이션은 안쪽 요소에 건다
     const wrap = document.createElement('div');
     const el = document.createElement('div');
     el.className = 'puff';
     wrap.appendChild(el);
-    const a = Math.random() * Math.PI * 2;
-    el.style.setProperty('--dx', `${Math.cos(a) * (40 + Math.random() * 30)}px`);
-    el.style.setProperty('--dy', `${Math.sin(a) * (30 + Math.random() * 25) - 20}px`);
-    el.style.setProperty('--s', (0.7 + Math.random() * 0.6).toFixed(2));
-    el.style.animationDelay = `${i * 70}ms`;
+    el.style.setProperty('--dx', `${(Math.random() - 0.5) * 70}px`);
+    el.style.setProperty('--dy', `${-30 - Math.random() * 50}px`);
+    el.style.setProperty('--s', (0.6 + Math.random() * 0.7).toFixed(2));
+    el.style.animationDelay = `${i * 90}ms`;
     const m = new maplibregl.Marker({ element: wrap }).setLngLat([ll.lng, ll.lat]).addTo(map);
     el.addEventListener('animationend', () => m.remove(), { once: true });
   }

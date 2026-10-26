@@ -67,7 +67,7 @@ fun RendererView(
           settings.javaScriptEnabled = true
           settings.allowFileAccess = false
           settings.allowContentAccess = false
-          setBackgroundColor(0xFFF4EBD9.toInt())
+          setBackgroundColor(0xFF19203D.toInt()) // 밤안개 바탕 (페이지가 뜨기 전 깜빡임 방지)
           if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             WebView.setWebContentsDebuggingEnabled(true)
           }

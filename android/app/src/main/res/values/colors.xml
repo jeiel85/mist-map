@@ -1,6 +1,5 @@
 <resources>
-  <color name="paper">#F4EBD9</color>
-  <color name="paper_hi">#FFFAF0</color>
-  <color name="ink">#3D342B</color>
-  <color name="yellow">#F6CD6A</color>
+  <color name="night">#19203D</color>
+  <color name="moon">#FFF3DC</color>
+  <color name="firefly">#FFD36E</color>
 </resources>
