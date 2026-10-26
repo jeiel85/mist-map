@@ -53,6 +53,38 @@ class TrackRepository(
     }
   }
 
+  /**
+   * 가져온 기록을 새 출처로 저장한다. 새 칸의 firstAt은 가져온 시각이라 화면이 새 칸으로 알아보고 걷어 낸다.
+   * @return 새로 밝힌 칸 수
+   */
+  suspend fun importCells(label: String, cellIds: List<Long>, at: Long = System.currentTimeMillis()): Int =
+    mist.withTransaction {
+      val originId = origins.insert(OriginEntity(kind = OriginEntity.KIND_IMPORT, label = label, createdAt = at))
+      var added = 0
+      for (chunk in cellIds.chunked(IMPORT_CHUNK)) {
+        added += cells.insertAll(chunk.map { CellEntity(it, firstAt = at, lastAt = at, visits = 1) }).count { it != -1L }
+        cells.linkAll(chunk.map { CellOriginEntity(it, originId) })
+      }
+      added
+    }
+
+  fun observeImports(): Flow<List<ImportSummary>> = origins.observeImports()
+
+  /**
+   * 가져온 파일 하나를 되돌린다. 그 파일에서만 온 칸이 사라지고, 걸어서 밝힌 칸이나 다른 파일과 겹친 칸은 남는다.
+   * @return 지운 칸 수
+   */
+  suspend fun undoImport(originId: Long): Int = mist.withTransaction {
+    val removed = cells.deleteOnlyFrom(originId)
+    // 외래 키 CASCADE에 기대지 않고 연결도 직접 지운다
+    origins.deleteLinks(originId)
+    origins.delete(originId)
+    removed
+  }
+
+  /** GPX 내보내기용 원시 위치 (최근 30일, D4). */
+  suspend fun allFixes(): List<FixEntity> = fixes.all()
+
   private suspend fun liveOriginId(): Long =
     origins.firstOfKind(OriginEntity.KIND_LIVE)?.id
       ?: origins.insert(
@@ -88,5 +120,6 @@ class TrackRepository(
 
   companion object {
     const val FIX_RETENTION_DAYS = 30L
+    private const val IMPORT_CHUNK = 500
   }
 }

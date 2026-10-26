@@ -34,6 +34,12 @@ class RendererBridge private constructor(private val port: WebMessagePortCompat)
 
   fun sendPlayer(fix: Fix) = post(JSONObject().put("type", "player").put("lng", fix.lng).put("lat", fix.lat))
 
+  /** 가져온 기록이 한눈에 들어오게 카메라를 옮긴다. */
+  fun sendFit(south: Double, west: Double, north: Double, east: Double) = post(
+    JSONObject().put("type", "fit")
+      .put("south", south).put("west", west).put("north", north).put("east", east),
+  )
+
   /** 앱 HUD가 가리는 위·아래 높이 (dp = WebView CSS px). */
   fun sendInsets(topDp: Int, bottomDp: Int) =
     post(JSONObject().put("type", "insets").put("top", topDp).put("bottom", bottomDp))

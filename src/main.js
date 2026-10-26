@@ -501,7 +501,7 @@ map.on('click', (e) => {
 // 앱은 페이지가 뜨면 'mistmap:port' 메시지와 함께 MessagePort 하나를 보내고, 이후 모든 메시지는 그 포트로 오간다.
 //   앱 → 웹: 칸 묶음 ArrayBuffer (WebView가 지원하지 않으면 같은 바이트를 {type:'cells', b64})
 //            [u8 종류(1=전체, 2=추가), 3바이트 비움, (u32 x, u32 y) 리틀 엔디언 반복]
-//            {type:'player', lng, lat}, {type:'insets', top, bottom}
+//            {type:'player', lng, lat}, {type:'insets', top, bottom}, {type:'fit', south, west, north, east}
 //   웹 → 앱: {type:'ready'}, {type:'error', message}
 const CELLS_SET = 1, CELLS_ADD = 2;
 const CELL_N = 2 ** CELL_LEVEL;
@@ -566,6 +566,12 @@ function setInsets({ top = 0, bottom = 0 }) {
   map.setPadding({ top, bottom, left: 0, right: 0 });
 }
 
+// 가져온 기록이 한눈에 들어오게 카메라를 옮긴다 (웹의 가져오기와 같은 연출)
+function fitTo({ south, west, north, east }) {
+  state.follow = false;
+  map.fitBounds([[west, south], [east, north]], { padding: 60, maxZoom: 16.2, duration: 1400 });
+}
+
 function base64ToBuffer(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -591,6 +597,7 @@ const native = (() => {
       const msg = JSON.parse(data);
       if (msg.type === 'player') movePlayer(msg);
       else if (msg.type === 'insets') setInsets(msg);
+      else if (msg.type === 'fit') fitTo(msg);
       else if (msg.type === 'cells') applyCells(base64ToBuffer(msg.b64));
       else console.warn('알 수 없는 앱 메시지', msg.type);
     } catch (e) {

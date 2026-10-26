@@ -16,6 +16,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
+import java.time.LocalDate
 import androidx.core.location.LocationManagerCompat
 import com.jeiel85.mistmap.tracking.TrackingService
 import com.jeiel85.mistmap.tracking.TrackingState
@@ -35,6 +37,15 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  // 기록 파일은 MIME 형식이 제각각이라(GPX가 octet-stream으로 오기도 함) 모두 받고 내용으로 판별한다
+  private val openRecord = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    uri?.let(vm::importFrom)
+  }
+
+  private val createGpx = registerForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
+    uri?.let(vm::exportGpx)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // 화면이 늘 밤 배경이라 시스템 막대 아이콘은 밝게 둔다
     enableEdgeToEdge(
@@ -50,9 +61,27 @@ class MainActivity : ComponentActivity() {
           onPause = { TrackingService.send(this, TrackingService.ACTION_PAUSE) },
           onResume = { TrackingService.send(this, TrackingService.ACTION_RESUME) },
           onStop = { TrackingService.send(this, TrackingService.ACTION_STOP) },
+          onImport = { openRecord.launch(arrayOf("*/*")) },
+          onExport = { createGpx.launch("mistmap-${LocalDate.now()}.gpx") },
         )
       }
     }
+    if (savedInstanceState == null) handleShared(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    handleShared(intent)
+  }
+
+  /** 다른 앱의 "공유 → Mist Map" 또는 파일 앱에서 "열기"로 받은 기록 파일. */
+  private fun handleShared(intent: Intent?) {
+    val uri = when (intent?.action) {
+      Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+      Intent.ACTION_VIEW -> intent.data
+      else -> null
+    } ?: return
+    vm.importFrom(uri)
   }
 
   private fun requestRecording() {

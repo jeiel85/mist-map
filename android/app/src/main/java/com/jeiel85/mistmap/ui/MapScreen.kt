@@ -32,6 +32,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -56,8 +59,13 @@ fun MapScreen(
   onPause: () -> Unit,
   onResume: () -> Unit,
   onStop: () -> Unit,
+  onImport: () -> Unit,
+  onExport: () -> Unit,
 ) {
   val status by vm.status.collectAsStateWithLifecycle()
+  val imports by vm.imports.collectAsStateWithLifecycle()
+  val busy by vm.busy.collectAsStateWithLifecycle()
+  var showRecords by rememberSaveable { mutableStateOf(false) }
   val todayM by vm.todayM.collectAsStateWithLifecycle()
   val notice by vm.notice.collectAsStateWithLifecycle()
   val rendererError by vm.rendererError.collectAsStateWithLifecycle()
@@ -73,6 +81,15 @@ fun MapScreen(
 
     rendererError?.let { RendererErrorCard(it, Modifier.align(Alignment.Center).padding(24.dp)) }
 
+    TopPill(
+      label = "기록 모음",
+      onClick = { showRecords = true },
+      modifier = Modifier
+        .align(Alignment.TopEnd)
+        .windowInsetsPadding(WindowInsets.statusBars)
+        .padding(top = 10.dp, end = 16.dp),
+    )
+
     AnimatedVisibility(
       visible = notice != null,
       enter = fadeIn() + slideInVertically { -it / 2 },
@@ -80,9 +97,34 @@ fun MapScreen(
       modifier = Modifier
         .align(Alignment.TopCenter)
         .windowInsetsPadding(WindowInsets.statusBars)
-        .padding(top = 12.dp, start = 16.dp, end = 16.dp),
+        .padding(top = TOP_BAR, start = 16.dp, end = 16.dp),
     ) {
       notice?.let { NoticePill(it, onDismiss = { vm.dismissNotice(it) }) }
+    }
+
+    busy?.let {
+      Text(
+        it,
+        color = Mist.Night,
+        fontSize = 13.sp,
+        modifier = Modifier
+          .align(Alignment.TopCenter)
+          .windowInsetsPadding(WindowInsets.statusBars)
+          .padding(top = TOP_BAR + 52.dp)
+          .background(Mist.Firefly, RoundedCornerShape(999.dp))
+          .padding(horizontal = 16.dp, vertical = 6.dp),
+      )
+    }
+
+    if (showRecords) {
+      RecordsSheet(
+        imports = imports,
+        busy = busy,
+        onImport = { showRecords = false; onImport() },
+        onExport = { showRecords = false; onExport() },
+        onUndo = vm::undoImport,
+        onDismiss = { showRecords = false },
+      )
     }
 
     Row(
@@ -90,7 +132,8 @@ fun MapScreen(
         .align(Alignment.BottomCenter)
         .fillMaxWidth()
         .onSizeChanged { size ->
-          with(density) { vm.updateInsets(statusBarDp.value.toInt(), size.height.toDp().value.toInt()) }
+          // 위쪽은 "기록 모음" 줄까지 가린다
+          with(density) { vm.updateInsets((statusBarDp + TOP_BAR).value.toInt(), size.height.toDp().value.toInt()) }
         }
         .windowInsetsPadding(WindowInsets.navigationBars)
         .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
@@ -100,6 +143,22 @@ fun MapScreen(
       TodayCard(todayM, status, Modifier.weight(1f))
       RecordControls(status, onStart, onPause, onResume, onStop)
     }
+  }
+}
+
+private val TOP_BAR = 56.dp
+
+@Composable
+private fun TopPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+  val shape = RoundedCornerShape(999.dp)
+  GlowBox(modifier, shape = shape) {
+    Text(
+      label,
+      style = TextStyle(fontFamily = Mist.Hand, fontSize = 19.sp, color = Mist.Moon),
+      modifier = Modifier
+        .clickable(role = Role.Button, onClick = onClick)
+        .padding(horizontal = 16.dp, vertical = 6.dp),
+    )
   }
 }
 
