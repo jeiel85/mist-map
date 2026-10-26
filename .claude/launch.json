@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mist-map",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5174", "--directory", "D:/Project/mist-map"],
+      "port": 5174
+    }
+  ]
+}

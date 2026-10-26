@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mist Map</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Gowun+Dodum&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <header class="card title-card">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 48 48"><path d="M12 31c-4 0-7-3-7-6.5S8 18 12 18c1-5 5-8 10-8 6 0 10 4 11 9 4 0 8 3 8 6.5S38 31 34 31Z" fill="#fffaf0" stroke="#3d342b" stroke-width="2.4" stroke-linejoin="round"/><path d="M10 37h14M28 37h9M15 42h10" stroke="#3d342b" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </div>
+    <div>
+      <h1>Mist Map</h1>
+      <p>걸은 만큼 걷히는 안개 지도</p>
+    </div>
+  </header>
+
+  <section class="card stats" aria-label="탐험 기록">
+    <div class="stat"><span class="v" id="stat-area">0</span><span class="u">km²</span><span class="k">밝힌 면적</span></div>
+    <div class="stat"><span class="v" id="stat-walk">0</span><span class="u">km</span><span class="k">걸은 거리</span></div>
+    <div class="stat"><span class="v" id="stat-spots">0</span><span class="u">곳</span><span class="k">발자국</span></div>
+  </section>
+
+  <nav class="dock">
+    <button class="btn" id="btn-stroll" title="자동 산책">
+      <svg viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="2"/><path d="M10 21l2-6 3 3v3M8 12l3-4 4 2 2 3M12 15l-1-5"/></svg>
+      <span>산책</span>
+    </button>
+    <button class="btn" id="btn-locate" title="내 위치 따라 걷기">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7.5"/></svg>
+      <span>내 위치</span>
+    </button>
+    <button class="btn" id="btn-reset" title="안개 다시 덮기">
+      <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v4.5h4.5"/></svg>
+      <span>초기화</span>
+    </button>
+  </nav>
+
+  <button class="btn follow" id="btn-follow" hidden>
+    <svg viewBox="0 0 24 24"><path d="M12 3l7 18-7-4-7 4z"/></svg>
+    <span>따라가기</span>
+  </button>
+
+  <div class="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 걷기 · <kbd>Shift</kbd> 달리기 · 지도 클릭으로 이동</div>
+  <div id="toast" role="status"></div>
+  <div id="fatal" hidden></div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
