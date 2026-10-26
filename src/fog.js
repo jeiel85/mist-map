@@ -7,7 +7,8 @@
 //        - D > 0  : 종이 + 경계를 감싸는 등고선 링 + 멀리 지형 등고선
 // 블롭 반경이 스프링으로 커지면 링들이 물결처럼 밀려나며 안개가 걷힌다.
 
-const BLOB_EXTENT = 3.0; // 블롭 쿼드 반경 (블롭 반지름 배수). exp(-9)에서 잘림
+const BLOB_EXTENT = 3.5; // 블롭 쿼드 반경 (블롭 반지름 배수). exp(-12.25)에서 잘림
+// 쿼드 경계에서 필드가 끊기므로 링은 그보다 안쪽(D < 1.9)에서 끝나야 직선 자국이 생기지 않는다
 
 const BLOB_VS = `#version 300 es
 in vec2 a_corner;
@@ -102,7 +103,7 @@ void main() {
 
   // 경계를 감싸는 링: 경계 가까이 촘촘하고 멀어질수록 넓어진다
   float t = sqrt(max(D, 0.0) / 2.1) * 6.0;
-  float ring = isoLine(t, 1.1 * u_dpr) * step(0.5, t) * (1.0 - smoothstep(0.5, 2.05, D)) * 0.75;
+  float ring = isoLine(t, 1.1 * u_dpr) * step(0.5, t) * (1.0 - smoothstep(0.5, 1.85, D)) * 0.75;
 
   vec3 fogCol = paper;
   fogCol = mix(fogCol, SOFT_INK, terr);

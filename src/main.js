@@ -148,7 +148,7 @@ function frameForFog() {
   const ppm = world / (EARTH_C * Math.cos((c.lat * Math.PI) / 180));
   const t = now();
   const rBase = REVEAL_RADIUS_M * ppm;
-  const margin = rBase * 3.2;
+  const margin = rBase * 3.6;
 
   if (blobBuf.length < state.points.length * 3) blobBuf = new Float32Array(state.points.length * 6);
   let n = 0;
