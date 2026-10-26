@@ -13,7 +13,7 @@ const OUT = process.argv[3] ?? path.join(os.tmpdir(), 'mist-app-mode.png');
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(`${URL}?app`, { waitUntil: 'networkidle' });
+  await page.goto(`${URL}?app&debug`, { waitUntil: 'networkidle' });
 
   const result = await page.evaluate(async () => {
     const N = 2 ** 21;
@@ -40,6 +40,8 @@ const OUT = process.argv[3] ?? path.join(os.tmpdir(), 'mist-app-mode.png');
     const ch = new MessageChannel();
     ch.port1.onmessage = (e) => received.push(JSON.parse(e.data));
     window.postMessage('mistmap:port', '*', [ch.port2]);
+    // 앱 HUD처럼 위·아래 높이가 다른 패딩: 지도 중심이 캔버스 가운데에서 벗어난다
+    ch.port1.postMessage(JSON.stringify({ type: 'insets', top: 24, bottom: 160 }));
     ch.port1.postMessage(JSON.stringify({ type: 'player', lng: path.at(-1).lng, lat: path.at(-1).lat }));
     ch.port1.postMessage(pack(1, cells.slice(0, -3)));
     await new Promise((r) => setTimeout(r, 1500));
@@ -48,7 +50,16 @@ const OUT = process.argv[3] ?? path.join(os.tmpdir(), 'mist-app-mode.png');
     ch.port1.postMessage(JSON.stringify({ type: 'cells', b64: btoa(String.fromCharCode(...add)) }));
     await new Promise((r) => setTimeout(r, 3500));
     const hud = ['.title-card', '.stats', '.dock'].map((s) => getComputedStyle(document.querySelector(s)).display);
-    return { received, cells: cells.length, hud };
+    // 첫 칸의 안개 블롭이 지도가 그 칸 중심을 그리는 화면 위치와 겹치는지 (CSS px, 1px 안쪽)
+    const frame = window.__mist.frameForFog();
+    const [cx, cy] = cells[0];
+    const cmy = (cy + 0.5) / N;
+    const target = window.__mist.map.project([((cx + 0.5) / N) * 360 - 180, (Math.atan(Math.sinh(Math.PI * (1 - 2 * cmy))) * 180) / Math.PI]);
+    let blobOffset = Infinity;
+    for (let i = 0; i < frame.count; i++) {
+      blobOffset = Math.min(blobOffset, Math.hypot(frame.blobs[i * 3] - target.x, frame.blobs[i * 3 + 1] - target.y));
+    }
+    return { received, cells: cells.length, hud, blobOffset };
   });
 
   await page.screenshot({ path: OUT });
@@ -57,6 +68,7 @@ const OUT = process.argv[3] ?? path.join(os.tmpdir(), 'mist-app-mode.png');
   const ok = result.received.some((m) => m.type === 'ready')
     && !result.received.some((m) => m.type === 'error')
     && result.hud.every((d) => d === 'none')
+    && result.blobOffset < 1
     && errors.length === 0;
   console.log(JSON.stringify({ ...result, errors, screenshot: OUT }, null, 1));
   if (!ok) process.exit(1);

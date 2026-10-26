@@ -59,6 +59,26 @@ class LocationFilterTest {
     assertEquals(0.0, r.distanceM, 0.0)
   }
 
+  @Test fun leavingByCarAfterStandingStillIsNotWalking() {
+    // 2분 동안 제자리(흔들림만) → 5초에 100m(20 m/s). 저장점 기준이면 100m/125초 = 0.8 m/s로 걷기처럼 보인다
+    val f = LocationFilter()
+    f.offer(fix(0, 0.0))
+    for (s in 5..120 step 5) f.offer(fix(s, if (s % 10 == 0) 3.0 else 0.0))
+    val r = f.offer(fix(125, 100.0)) as FilterResult.Accepted
+    assertFalse(r.reveals)
+    assertEquals(0.0, r.distanceM, 0.0)
+  }
+
+  @Test fun slowWalkAcrossJitterStepsStillCounts() {
+    // 1 m/s로 5초마다 5m: 한 걸음은 흔들림으로 버려지지만 두 걸음째에 10m로 저장된다
+    val f = LocationFilter()
+    f.offer(fix(0, 0.0))
+    assertEquals(FilterResult.Rejected(FilterResult.Reason.JITTER), f.offer(fix(5, 5.0)))
+    val r = f.offer(fix(10, 10.0)) as FilterResult.Accepted
+    assertTrue(r.reveals)
+    assertEquals(10.0, r.distanceM, 0.1)
+  }
+
   @Test fun longGapStartsFresh() {
     val f = LocationFilter()
     f.offer(fix(0, 0.0))

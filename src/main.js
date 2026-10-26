@@ -235,6 +235,8 @@ function frameForFog() {
   const canvas = map.getCanvas();
   const w = canvas.clientWidth, h = canvas.clientHeight;
   const c = map.getCenter();
+  // 패딩(앱 HUD)이 있으면 지도 중심은 캔버스 한가운데가 아니라 패딩을 뺀 영역의 가운데에 그려진다
+  const cp = map.project(c);
   const cmx = mercX(c.lng), cmy = mercY(c.lat);
   const world = 512 * Math.pow(2, map.getZoom());
   const ppm = world / (EARTH_C * Math.cos((c.lat * Math.PI) / 180));
@@ -245,8 +247,8 @@ function frameForFog() {
   if (blobBuf.length < state.points.length * 3) blobBuf = new Float32Array(state.points.length * 6);
   let n = 0;
   for (const p of state.points) {
-    const x = (p.mx - cmx) * world + w / 2;
-    const y = (p.my - cmy) * world + h / 2;
+    const x = (p.mx - cmx) * world + cp.x;
+    const y = (p.my - cmy) * world + cp.y;
     if (x < -margin || y < -margin || x > w + margin || y > h + margin) continue;
     const r = rBase * growth(t - p.born);
     if (r <= 0.01) continue;
@@ -256,7 +258,7 @@ function frameForFog() {
   return {
     blobs: blobBuf,
     count: n,
-    origin: [(mercX(state.origin.lng) - cmx) * world + w / 2, (mercY(state.origin.lat) - cmy) * world + h / 2],
+    origin: [(mercX(state.origin.lng) - cmx) * world + cp.x, (mercY(state.origin.lat) - cmy) * world + cp.y],
     ppm,
     time: t,
   };
@@ -661,6 +663,6 @@ map.on('load', () => {
 });
 
 // ?debug: 개발 중 콘솔에서 시뮬레이션을 직접 돌릴 수 있게 노출
-if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles };
+if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles, frameForFog };
 
 map.on('error', (e) => console.warn('지도 오류', e.error ?? e));
