@@ -12,7 +12,8 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); color: var(--ink); font-family: var(--font-body); }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); color: var(--ink); font-family: var(--font-body); word-break: keep-all; }
+.only-narrow { display: none; }
 #map { position: absolute; inset: 0; }
 .maplibregl-canvas { outline: none; cursor: crosshair; }
 .maplibregl-ctrl-attrib { background: rgba(244, 235, 217, 0.85) !important; font-size: 10px; }
@@ -217,7 +218,7 @@ kbd {
 .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .drop svg { width: 56px; height: 56px; fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; animation: float 3s ease-in-out infinite; }
 .drop strong { font-family: var(--font-hand); font-size: 21px; }
-.drop span { font-size: 12px; color: var(--ink-soft); }
+.drop > span { font-size: 12px; color: var(--ink-soft); }
 
 .sheet details { border-top: 2px dashed rgba(61, 52, 43, 0.2); padding: 10px 2px; font-size: 13px; }
 .sheet summary { cursor: pointer; font-weight: 700; list-style: none; display: flex; align-items: center; gap: 6px; }
@@ -249,6 +250,8 @@ body.dragging #drop-overlay div { transform: none; }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(16px) scale(0.97); } }
 
 @media (max-width: 640px) {
+  .only-wide { display: none; }
+  .only-narrow { display: inline; }
   .title-card { top: 12px; left: 12px; padding: 6px 12px 6px 8px; }
   .title-card h1 { font-size: 24px; }
   .logo { width: 34px; height: 34px; }
