@@ -272,6 +272,11 @@ body.dragging #drop-overlay div { transform: none; }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(16px) scale(0.97); } }
 
+/* 중간 폭에선 오른쪽 아래 저작권 표시와 겹치지 않게 단축키 안내를 버튼 줄 위로 올린다 */
+@media (min-width: 641px) and (max-width: 1180px) {
+  .hint { bottom: 106px; }
+}
+
 @media (max-width: 640px) {
   .only-wide { display: none; }
   .only-narrow { display: inline; }
