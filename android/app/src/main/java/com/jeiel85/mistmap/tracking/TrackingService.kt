@@ -64,6 +64,9 @@ class TrackingService : LifecycleService() {
   private var lastRawAt = 0L
   private var gapping = false
   private var sleepWatch: Job? = null
+  /** 쉬기에 들어간 뒤 처음 확인한 위치. 기록 시작 직후라 받아들인 위치가 없을 때 비교 기준이 된다 */
+  private var sleepAnchor: LatLng? = null
+  private var sleeping = false
   private var sessionId: Long? = null
   private var sessionDay: LocalDate? = null
   private var lastFixAt = 0L
@@ -212,6 +215,7 @@ class TrackingService : LifecycleService() {
     fused.removeLocationUpdates(callback)
     sleepWatch?.cancel()
     TrackingState.status.value = TrackingState.Status.PAUSED
+    gapping = false
     TrackingState.warning.value = null
   }
 
@@ -275,10 +279,13 @@ class TrackingService : LifecycleService() {
           Log.w(MistApp.TAG, "쉬는 중 위치 확인 실패", e)
           null
         } ?: continue
-        val last = TrackingState.lastFix.value ?: continue
-        if (Geo.distanceM(last.latLng, LatLng(here.latitude, here.longitude)) > WAKE_DISTANCE_M) {
-          events.trySend(Event.Wake)
+        val point = LatLng(here.latitude, here.longitude)
+        val anchor = TrackingState.lastFix.value?.latLng ?: sleepAnchor
+        if (anchor == null) {
+          sleepAnchor = point
+          continue
         }
+        if (Geo.distanceM(anchor, point) > WAKE_DISTANCE_M) events.trySend(Event.Wake)
       }
     }
   }
@@ -334,10 +341,19 @@ class TrackingService : LifecycleService() {
       // 일부러 GPS를 끈 것이니 "위치를 못 받음" 경고는 내린다
       gapping = false
       TrackingState.warning.value = null
+      sleeping = true
+      sleepAnchor = null
       watchWhileSleeping()
       return
     }
     sleepWatch?.cancel()
+    if (sleeping) {
+      // 쉬는 동안 어떻게 움직였는지 모르니(차로 몇 백 m 갔을 수도) 깨어난 첫 위치를 잠들기 전 점과 잇지 않는다
+      sleeping = false
+      filter.reset(null)
+      trail.reset()
+      motion.reset()
+    }
     lastRawAt = System.currentTimeMillis() // 쉬다 깨어나면 끊김 시간을 새로 잰다
     fused.requestLocationUpdates(request, callback, Looper.getMainLooper())
       .addOnFailureListener { e ->
