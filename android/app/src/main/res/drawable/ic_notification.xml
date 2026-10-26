@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 웹 로고의 구름 (index.html) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp" android:height="24dp"
+  android:viewportWidth="48" android:viewportHeight="48">
+  <path android:fillColor="#FFFFFFFF"
+    android:pathData="M12,31c-4,0 -7,-3 -7,-6.5S8,18 12,18c1,-5 5,-8 10,-8 6,0 10,4 11,9 4,0 8,3 8,6.5S38,31 34,31Z" />
+  <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round"
+    android:pathData="M10,37h14M28,37h9M15,42h10" />
+</vector>

@@ -267,3 +267,10 @@ body.dragging #drop-overlay div { transform: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ---- 앱 모드 (?app): HUD는 앱이 그린다 ---- */
+body.app .title-card, body.app .stats, body.app .dock, body.app .hint { display: none; }
+body.app .maplibregl-canvas { cursor: grab; }
+body.app #toast { top: calc(var(--app-top, 0px) + 16px); }
+body.app .follow { bottom: calc(var(--app-bottom, 0px) + 40px); } /* 저작권 표시(ⓘ) 위 */
+body.app .maplibregl-ctrl-bottom-right { bottom: var(--app-bottom, 0px); }

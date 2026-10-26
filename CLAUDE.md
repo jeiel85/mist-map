@@ -9,15 +9,14 @@
 ## 현재 상태 (2026-10-26)
 
 - **웹 프로토타입 완료·배포됨**: 등고선 안개 셰이더, 손그림 지도 스타일, 새싹 젤리 캐릭터, 걷기·산책·GPS, 기록 가져오기(GPX·KML·GeoJSON·구글 타임라인), `localStorage` 저장
-- **앱 설계 완료, 구현 전**: [docs/app-architecture.md](docs/app-architecture.md), [DECISIONS.md](DECISIONS.md)의 D1~D4는 모두 **제안** 상태다. 사용자가 확정하기 전에는 Android 코드를 만들지 않는다.
-- 열린 이슈: #1 `Hardening candidates: v0.1.0`, #2 `Hardening candidates: v0.2.0`
+- **D1~D4 확정(2026-10-26), M1 기록 구현됨**: `android/`에 포그라운드 위치 서비스·필터·Room 칸 저장·WebView 렌더러(`?app` 모드)·오늘 거리 HUD. 에뮬레이터에서 화면을 끈 채 걷고 앱을 열면 길이 걷혀 있는 것까지 확인. 설계와 달라진 점은 [docs/app-architecture.md](docs/app-architecture.md) 9장.
+- 열린 이슈: #1 `Hardening candidates: v0.1.0`(유휴 렌더 중단은 M1에서 처리), #2 `Hardening candidates: v0.2.0`
 
 ## 다음 단계
 
-1. 사용자에게 D1~D4 확정 여부를 묻는다 (수정 요청이 있으면 설계 문서와 DECISIONS.md를 먼저 고친다).
-2. 확정되면 **M1 기록**: `android/` 프로젝트 생성 → 포그라운드 위치 서비스·필터 → Room 칸 저장 → WebView 렌더러 앱 모드 → 오늘 거리 HUD.
-   완료 기준: 실기기에서 화면을 끈 채 30분 걷고 앱을 열면 그 길이 걷혀 있음.
-3. M1에 필요한 웹 쪽 선행 작업: 앱 모드(칸 목록 입력, 웹 HUD 숨김), 유휴 시 렌더 중단(이슈 #1 첫 항목).
+1. **M1 완료 기준을 실기기에서 확인**: 화면을 끈 채 30분 걷고 앱을 열면 그 길이 걷혀 있음. 배터리 사용량도 함께 본다.
+2. M2 가져오기: Kotlin 파서(`samples/`·웹 테스트 입력 재사용), SAF·공유 받기, 출처별 되돌리기, GPX 내보내기.
+3. 남은 항목은 [BACKLOG.md](BACKLOG.md).
 
 ## 구조
 
@@ -38,6 +37,7 @@ docs/               README 스크린샷, 앱 설계 문서
 
 ```bash
 npm start                          # http://localhost:5174 정적 서버
+node tools/app-mode.cjs            # 앱 모드(?app) 브리지 점검 (서버가 떠 있어야 함)
 npm test                           # 파서 단위 테스트
 npm run e2e                        # 가져오기 흐름 점검 (서버가 떠 있어야 함)
 node tools/e2e-import.cjs https://jeiel85.github.io/mist-map/   # 배포본 점검
@@ -47,6 +47,20 @@ npm run screenshots                # docs/ 스크린샷 다시 찍기
 - **화면 확인은 `tools/`의 헤드리스 Chrome으로 한다.** 데스크톱 앱 내장 브라우저 패널은 백그라운드일 때 requestAnimationFrame이 멈춰서 애니메이션과 걷기가 진행되지 않고, 스크린샷에 중간 프레임(안개·HUD 없는 지도)이 찍힌다.
 - `?debug`를 붙이면 `window.__mist`(`state`, `update`, `keys`, `map`, `importFiles`)가 노출된다. `update(1/60)`을 반복 호출해 이동을 시뮬레이션한다.
 - 셰이더를 고치면 줌 15.0·15.7·16.2와 모바일(390px)에서 스크린샷을 찍어 확인한다. 실제로 있었던 문제: 블롭 쿼드 경계의 직선 자국, 축소 시 링이 굵은 띠로 뭉침.
+
+### Android (`android/`)
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug     # 단위 테스트 + 디버그 APK
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+- 웹 렌더러는 빌드 때 루트 `index.html`·`src/`를 `assets/web/`으로 복사한다(`syncWebAssets`). 웹을 고치면 앱도 다시 빌드해야 반영된다.
+- 앱 ↔ 웹 메시지 형식은 `src/main.js`의 "앱 브리지" 주석과 `RendererBridge.kt`가 짝이다. 한쪽을 바꾸면 다른 쪽과 `tools/app-mode.cjs`도 고친다.
+- 에뮬레이터 검증: `adb emu geo fix <lng> <lat>`를 3초마다 6m씩 옮기며 걷고, `adb shell input keyevent KEYCODE_SLEEP`으로 화면을 끈다. 잠금 해제 스와이프가 지도를 끌어 따라가기가 풀릴 수 있다.
+- WebView 디버깅: 디버그 빌드는 원격 디버깅이 켜져 있다. `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` 후 CDP로 평가한다. 웹 콘솔은 logcat `MistMap` 태그로도 나온다.
+- 릴리스 서명: 업로드 키는 `android/.keystore/`(git 제외)에 있고(로컬 원본: 메인 체크아웃 `D:\Project\mist-map\android\.keystore\`), 백업은 `G:\내 드라이브\모바일 앱 개발\Mist Map\릴리즈 키스토어`. 비밀번호는 `release-signing.properties`에만 있다.
 
 ## 관례
 

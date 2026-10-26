@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 이하 자동 백업. 원시 위치(fixes.db)는 넣지 않는다 (DECISIONS D4) -->
+<full-backup-content>
+  <include domain="database" path="mist.db" />
+  <include domain="database" path="mist.db-wal" />
+  <include domain="database" path="mist.db-shm" />
+</full-backup-content>

@@ -90,17 +90,23 @@ src/mapStyle.js   종이·잉크 팔레트 지도 스타일
 src/style.css     HUD · 캐릭터 · 애니메이션
 tests/            파서 단위 테스트 (node --test)
 samples/          가져오기 시험용 샘플 기록
+android/          Android 앱 (기록은 네이티브, 그리기는 이 웹 렌더러를 WebView로)
 ```
 
 ## 상태
 
-모바일 앱으로 옮기기 전에 안개 표현의 느낌을 확정하기 위한 **프로토타입**입니다. 하루 종일 이어지는 배경 위치 기록, 배터리 최적화, 계정·동기화는 아직 없습니다.
+웹은 안개 표현의 느낌을 확정하기 위한 **프로토타입**입니다.
 
-백그라운드 위치 기록 앱의 설계는 [docs/app-architecture.md](docs/app-architecture.md), 주요 결정은 [DECISIONS.md](DECISIONS.md)에 있습니다.
+**Android 앱(M1 기록)** 을 만드는 중입니다. 기록 켜기를 누르면 화면을 꺼도 걸은 길을 기록하고, 앱을 열면 그 길의 안개가 걷혀 있습니다. 앱은 이 저장소의 `index.html`·`src/`를 그대로 렌더러로 씁니다(`?app` 모드). 설계는 [docs/app-architecture.md](docs/app-architecture.md), 주요 결정은 [DECISIONS.md](DECISIONS.md)에 있습니다.
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug   # 단위 테스트 + 디버그 APK
+```
 
 ## 크레딧
 
 - 지도 데이터 © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
 - 벡터 타일 [OpenFreeMap](https://openfreemap.org) · 스키마 [OpenMapTiles](https://openmaptiles.org)
 - 렌더링 [MapLibre GL JS](https://maplibre.org)
-- 글꼴 [Gaegu](https://fonts.google.com/specimen/Gaegu), [Gowun Dodum](https://fonts.google.com/specimen/Gowun+Dodum)
+- 글꼴 [Gaegu](https://fonts.google.com/specimen/Gaegu), [Gowun Dodum](https://fonts.google.com/specimen/Gowun+Dodum) (앱에 넣은 Gaegu는 SIL OFL 1.1, [android/third_party/Gaegu-OFL.txt](android/third_party/Gaegu-OFL.txt))
