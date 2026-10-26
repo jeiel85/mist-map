@@ -17,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import android.view.WindowManager
 import java.time.LocalDate
 import androidx.core.location.LocationManagerCompat
 import com.jeiel85.mistmap.tracking.TrackingService
@@ -63,6 +64,7 @@ class MainActivity : ComponentActivity() {
           onStop = { TrackingService.send(this, TrackingService.ACTION_STOP) },
           onImport = { openRecord.launch(arrayOf("*/*")) },
           onExport = { createGpx.launch("mistmap-${LocalDate.now()}.gpx") },
+          onDim = ::setDimmed,
         )
       }
     }
@@ -82,6 +84,13 @@ class MainActivity : ComponentActivity() {
       else -> null
     } ?: return
     vm.importFrom(uri)
+  }
+
+  /** 간단히 보기 동안 화면 밝기를 낮춘다. 나오면 시스템 밝기로 돌려놓는다. */
+  private fun setDimmed(dim: Boolean) {
+    window.attributes = window.attributes.apply {
+      screenBrightness = if (dim) DIM_BRIGHTNESS else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
   }
 
   private fun requestRecording() {
@@ -119,3 +128,5 @@ class MainActivity : ComponentActivity() {
     startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
   }
 }
+
+private const val DIM_BRIGHTNESS = 0.08f

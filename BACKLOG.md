@@ -2,6 +2,11 @@
 
 완료된 작업을 다시 열지 않고 나중에 볼 개선점. 항목당 무엇을 · 왜 · 영향 범위.
 
+## 간단히 보기 · 30분 걷기 (2026-10-26)
+
+- [ ] **멈춤 모드 GPS 비용** — 멈춤에서도 고정밀 1분 간격이라 오래 머물 때 배터리를 씀 · M3 Activity Recognition으로 멈춤을 감지하면 GPS를 끔 · `TrackingService.requestUpdates`
+- [ ] **간단히 보기 진입 시간 설정** — 1분 고정 · 더 빨리/늦게 원하는 사용자 · `MapScreen.SIMPLE_AFTER_MS`
+
 ## M2 가져오기 (2026-10-26)
 
 - [ ] **큰 파일 스트리밍 파싱** — 지금은 파일 전체를 문자열로 읽어 힙의 1/16(최대 32MB)에서 막음 · 몇 년 치 Records.json(수백 MB) 사용자 · `MapViewModel.readText`, `HistoryParser`

@@ -117,9 +117,10 @@ class TrackingService : LifecycleService() {
       }
     }
     lifecycleScope.launch {
-      combine(TrackingState.status, repo.todayDistance()) { status, m -> status to m }
+      // 알림은 0.1km 단위로 보이므로 그 값이 바뀔 때만 다시 게시한다 (위치마다 게시하면 30분에 120번 넘게 깨움)
+      combine(TrackingState.status, repo.todayDistance()) { status, m -> status to (m / 100).toLong() }
         .distinctUntilChanged()
-        .collect { (status, m) -> if (status != TrackingState.Status.OFF) notifications.show(status, m) }
+        .collect { (status, hm) -> if (status != TrackingState.Status.OFF) notifications.show(status, hm * 100.0) }
     }
     lifecycleScope.launch { watchForAutoStop() }
   }
@@ -211,7 +212,9 @@ class TrackingService : LifecycleService() {
         .build()
       // 저전력 위치는 정확도 필터(35m)에 걸러지므로 빠른 이동에도 고정밀을 쓰되 간격을 늘린다
       MotionMode.FAST -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 30_000).build()
-      MotionMode.STILL -> LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 120_000).build()
+      // 저전력(와이파이·기지국) 위치는 그것이 없는 곳(지하·외곽·데이터 꺼짐, 에뮬레이터)에서 아예 오지 않아
+      // 다시 걷기 시작해도 멈춤에서 빠져나오지 못한다. GPS를 쓰되 1분 간격으로 띄엄띄엄 받는다.
+      MotionMode.STILL -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 60_000).build()
     }
     fused.removeLocationUpdates(callback)
     fused.requestLocationUpdates(request, callback, Looper.getMainLooper())

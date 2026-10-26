@@ -14,6 +14,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -44,12 +45,14 @@ fun RendererView(
   onConnected: (RendererBridge?) -> Unit,
   onMessage: (JSONObject) -> Unit,
   modifier: Modifier = Modifier,
+  paused: Boolean = false,
 ) {
   val connected by rememberUpdatedState(onConnected)
   val messages by rememberUpdatedState(onMessage)
   // 렌더러 프로세스가 죽으면 WebView를 새로 만든다
   var generation by remember { mutableIntStateOf(0) }
   val lifecycle = LocalLifecycleOwner.current.lifecycle
+  val isPaused by rememberUpdatedState(paused)
 
   key(generation) {
     val webViewRef = remember { AtomicReference<WebView?>() }
@@ -110,7 +113,7 @@ fun RendererView(
         when (event) {
           // 화면이 꺼져 있으면 그리지 않는다. 기록은 서비스와 DB만으로 돈다.
           Lifecycle.Event.ON_PAUSE -> webViewRef.get()?.onPause()
-          Lifecycle.Event.ON_RESUME -> webViewRef.get()?.onResume()
+          Lifecycle.Event.ON_RESUME -> if (!isPaused) webViewRef.get()?.onResume()
           else -> Unit
         }
       }
@@ -120,6 +123,12 @@ fun RendererView(
         connected(null)
         webViewRef.getAndSet(null)?.destroy()
       }
+    }
+    // 간단히 보기(절전) 동안에는 화면이 켜져 있어도 지도·안개를 그리지 않는다
+    LaunchedEffect(paused) {
+      val view = webViewRef.get() ?: return@LaunchedEffect
+      if (paused) view.onPause()
+      else if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) view.onResume()
     }
   }
 }
