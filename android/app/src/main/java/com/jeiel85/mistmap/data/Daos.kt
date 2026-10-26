@@ -17,6 +17,20 @@ interface CellDao {
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   suspend fun link(link: CellOriginEntity)
 
+  /** @return 칸마다 새로 넣은 행 ID, 이미 있던 칸은 -1 */
+  @Insert(onConflict = OnConflictStrategy.IGNORE)
+  suspend fun insertAll(cells: List<CellEntity>): List<Long>
+
+  @Insert(onConflict = OnConflictStrategy.IGNORE)
+  suspend fun linkAll(links: List<CellOriginEntity>)
+
+  /** [originId]에만 속한 칸을 지운다. 다른 출처(실시간 기록·다른 파일)도 밝힌 칸은 남는다. */
+  @Query(
+    "DELETE FROM cell WHERE cellId IN (SELECT cellId FROM cell_origin WHERE originId = :originId) " +
+      "AND cellId NOT IN (SELECT cellId FROM cell_origin WHERE originId != :originId)",
+  )
+  suspend fun deleteOnlyFrom(originId: Long): Int
+
   @Query("SELECT cellId FROM cell")
   suspend fun allIds(): List<Long>
 
@@ -57,7 +71,23 @@ interface OriginDao {
 
   @Insert
   suspend fun insert(origin: OriginEntity): Long
+
+  @Query("DELETE FROM origin WHERE id = :id")
+  suspend fun delete(id: Long)
+
+  @Query("DELETE FROM cell_origin WHERE originId = :id")
+  suspend fun deleteLinks(id: Long)
+
+  @Query(
+    "SELECT o.id AS id, o.label AS label, o.createdAt AS createdAt, COUNT(co.cellId) AS cells " +
+      "FROM origin o LEFT JOIN cell_origin co ON co.originId = o.id " +
+      "WHERE o.kind = 'IMPORT' GROUP BY o.id ORDER BY o.createdAt DESC",
+  )
+  fun observeImports(): Flow<List<ImportSummary>>
 }
+
+/** 가져온 파일 하나. [cells]는 이 파일이 밝힌 칸 수(다른 출처와 겹치는 칸 포함). */
+data class ImportSummary(val id: Long, val label: String, val createdAt: Long, val cells: Int)
 
 @Dao
 interface FixDao {
@@ -66,6 +96,9 @@ interface FixDao {
 
   @Query("SELECT * FROM fix ORDER BY time DESC LIMIT 1")
   suspend fun latest(): FixEntity?
+
+  @Query("SELECT * FROM fix ORDER BY sessionId, time")
+  suspend fun all(): List<FixEntity>
 
   @Query("SELECT MAX(time) FROM fix WHERE sessionId = :sessionId")
   suspend fun lastTimeOf(sessionId: Long): Long?

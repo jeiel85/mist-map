@@ -23,6 +23,15 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import android.net.Uri
+import android.provider.OpenableColumns
+import com.jeiel85.mistmap.data.GpxExporter
+import com.jeiel85.mistmap.data.ImportSummary
+import com.jeiel85.mistmap.importers.HistoryParser
+import com.jeiel85.mistmap.importers.ImportException
+import com.jeiel85.mistmap.importers.ImportPlanner
 
 class MapViewModel(app: Application) : AndroidViewModel(app) {
   private val repo = (app as MistApp).repository
@@ -40,6 +49,7 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
   private var bridgeJob: Job? = null
   private var insets = 0 to 0
   private var bridge: RendererBridge? = null
+  private var pendingFit: ((RendererBridge) -> Unit)? = null
 
   init {
     viewModelScope.launch {
@@ -66,6 +76,17 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
     bridge = next
     if (next == null) return
     _rendererError.value = null
+    sync(next)
+  }
+
+  /** 칸이 사라졌을 때(가져오기 되돌리기) 렌더러에 칸 전체를 다시 보낸다. */
+  private fun resync() {
+    val current = bridge ?: return
+    bridgeJob?.cancel()
+    sync(current)
+  }
+
+  private fun sync(next: RendererBridge) {
     bridgeJob = viewModelScope.launch {
       (getApplication<MistApp>()).startup.await()
       next.sendInsets(insets.first, insets.second)
@@ -74,6 +95,7 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
       val snapshot = repo.cellSnapshot()
       val sent = HashSet<Long>(snapshot.ids)
       next.sendCells(RendererBridge.CELLS_SET, snapshot.ids)
+      pendingFit?.let { it(next); pendingFit = null }
       var after = snapshot.latestFirstAt
       launch {
         repo.observeLatestFirstAt().filterNotNull().collect { latest ->
@@ -84,6 +106,105 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
         }
       }
       launch { TrackingState.lastFix.filterNotNull().collect(next::sendPlayer) }
+    }
+  }
+
+  // ---- 가져오기 · 되돌리기 · 내보내기 (M2) ----
+
+  val imports: StateFlow<List<ImportSummary>> = repo.observeImports()
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+  private val _busy = MutableStateFlow<String?>(null)
+  /** 가져오기·내보내기 진행 중 안내. null이면 쉬는 중 */
+  val busy = _busy.asStateFlow()
+
+  /** 파일 선택이나 다른 앱의 공유로 받은 기록 파일을 읽어 그곳의 안개를 걷는다. */
+  fun importFrom(uri: Uri) {
+    if (_busy.value != null) {
+      show(Notice("앞의 작업이 끝난 뒤에 다시 해 주세요."))
+      return
+    }
+    viewModelScope.launch {
+      val name = displayName(uri) ?: "기록 파일"
+      _busy.value = "$name 읽는 중…"
+      try {
+        val result = withContext(Dispatchers.Default) {
+          val text = readText(uri) ?: throw ImportException("파일을 열 수 없어요")
+          val history = HistoryParser.parse(text)
+          val plan = ImportPlanner.plan(history)
+          val added = repo.importCells("${history.format} · $name", plan.cellIds)
+          Triple(history, plan, added)
+        }
+        val (history, plan, added) = result
+        val fit = { b: RendererBridge -> b.sendFit(plan.south, plan.west, plan.north, plan.east) }
+        // 공유로 앱이 막 열렸다면 렌더러가 아직 없으니 연결될 때 맞춘다
+        bridge?.let(fit) ?: run { pendingFit = fit }
+        show(
+          Notice(
+            if (added == 0) "${history.format} 기록의 장소는 이미 모두 밝혀져 있어요"
+            else "${history.format}에서 ${"%,d".format(added)}칸을 새로 밝혔어요 · ${"%.1f".format(plan.distanceM / 1000)}km",
+          ),
+        )
+      } catch (e: ImportException) {
+        show(Notice("$name: ${e.message}"))
+      } catch (e: Exception) {
+        Log.e(MistApp.TAG, "가져오기 실패: $uri", e)
+        show(Notice("$name 을(를) 읽다가 문제가 생겼어요."))
+      } finally {
+        _busy.value = null
+      }
+    }
+  }
+
+  /** 너무 큰 파일은 메모리를 넘기므로 미리 막는다. 몇 년 치 Records.json은 나눠 넣어야 한다. */
+  private fun readText(uri: Uri): String? {
+    val resolver = getApplication<Application>().contentResolver
+    resolver.openInputStream(uri)?.use { input ->
+      val bytes = input.readNBytesCompat(MAX_IMPORT_BYTES + 1)
+      if (bytes.size > MAX_IMPORT_BYTES) {
+        throw ImportException("파일이 너무 커요(${MAX_IMPORT_BYTES / 1_000_000}MB까지). 기간을 나눠 내보낸 파일을 넣어 주세요")
+      }
+      return bytes.toString(Charsets.UTF_8)
+    }
+    return null
+  }
+
+  private fun displayName(uri: Uri): String? = try {
+    getApplication<Application>().contentResolver
+      .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+      ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+  } catch (e: Exception) {
+    Log.w(MistApp.TAG, "파일 이름을 읽지 못함: $uri", e)
+    null
+  } ?: uri.lastPathSegment
+
+  fun undoImport(summary: ImportSummary) {
+    viewModelScope.launch {
+      val removed = repo.undoImport(summary.id)
+      resync()
+      show(Notice("${summary.label} 기록을 되돌렸어요 · ${"%,d".format(removed)}칸이 다시 안개에 덮였어요"))
+    }
+  }
+
+  /** 최근 30일의 원시 위치를 GPX로 쓴다 (D4: 그보다 오래된 원시 위치는 남아 있지 않다). */
+  fun exportGpx(uri: Uri) {
+    viewModelScope.launch {
+      _busy.value = "GPX 만드는 중…"
+      try {
+        val count = withContext(Dispatchers.IO) {
+          val fixes = repo.allFixes()
+          val resolver = getApplication<Application>().contentResolver
+          resolver.openOutputStream(uri)?.bufferedWriter()?.use { GpxExporter.write(fixes, it) }
+            ?: throw java.io.IOException("파일을 쓸 수 없음: $uri")
+          fixes.size
+        }
+        show(Notice(if (count == 0) "내보낼 기록이 없어요. 기록을 켜고 걸어 보세요" else "최근 30일 기록 ${"%,d".format(count)}개 지점을 GPX로 저장했어요"))
+      } catch (e: Exception) {
+        Log.e(MistApp.TAG, "GPX 내보내기 실패", e)
+        show(Notice("GPX 파일을 저장하지 못했어요."))
+      } finally {
+        _busy.value = null
+      }
     }
   }
 
@@ -127,6 +248,20 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
   override fun onCleared() {
     bridge?.close()
   }
+}
+
+private const val MAX_IMPORT_BYTES = 64_000_000
+
+/** InputStream.readNBytes는 API 33부터라 직접 읽는다. 최대 [limit]바이트 */
+private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
+  val out = java.io.ByteArrayOutputStream()
+  val buf = ByteArray(64 * 1024)
+  while (out.size() < limit) {
+    val n = read(buf, 0, minOf(buf.size, limit - out.size()))
+    if (n < 0) break
+    out.write(buf, 0, n)
+  }
+  return out.toByteArray()
 }
 
 /** 화면 위쪽에 잠깐 뜨는 안내. [action]이 있으면 눌렀을 때 실행한다. */

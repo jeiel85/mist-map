@@ -32,8 +32,8 @@ android {
     applicationId = "com.jeiel85.mistmap"
     minSdk = 26
     targetSdk = 36
-    versionCode = 1
-    versionName = "0.3.0"
+    versionCode = 2
+    versionName = "0.4.0"
   }
 
   // 업로드 키는 저장소 밖(.keystore/, git 제외)에 둔다. 백업: G:\내 드라이브\모바일 앱 개발\Mist Map\릴리즈 키스토어
@@ -93,6 +93,7 @@ dependencies {
   // play-services가 끌어오는 옛 fragment(1.3 미만)에서는 registerForActivityResult가 깨진다
   implementation(libs.androidx.fragment)
   implementation(libs.kotlinx.coroutines.android)
+  implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.play.services)
   implementation(libs.play.services.location)
   testImplementation(libs.junit)
