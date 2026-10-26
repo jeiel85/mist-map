@@ -17,6 +17,12 @@ const DEDUP_M = 18;              // 이 격자 칸에 이미 지점이 있으면
 const IMPORT_GAP_M = 1500;       // 가져온 기록에서 이보다 멀리 떨어진 두 점은 잇지 않는다(기록 공백·장거리 이동)
 const IMPORT_MAX_POINTS = 100000; // 한 번에 가져올 새 지점 상한 (localStorage 용량 보호)
 const EARTH_C = 40075016.686;
+const CELL_LEVEL = 21;           // 앱이 넘기는 칸: 웹 메르카토르 쿼드트리 21단계 (DECISIONS D2)
+const IDLE_FPS = 15;             // 움직임·걷힘 연출이 없을 때 안개를 다시 그리는 빈도
+
+// ?app: Android 앱의 WebView 안에서 렌더러로만 동작한다. 기록·저장·HUD는 앱이 맡는다.
+const APP = new URLSearchParams(location.search).has('app');
+if (APP) document.body.classList.add('app');
 
 // ---- 좌표 유틸 ----
 const mercX = (lng) => (lng + 180) / 360;
@@ -54,6 +60,7 @@ const now = () => performance.now() / 1000;
 
 // ---- 저장 ----
 function loadSave() {
+  if (APP) return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -64,6 +71,7 @@ function loadSave() {
 }
 let saveTimer = 0;
 function scheduleSave() {
+  if (APP) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
@@ -101,8 +109,10 @@ const dedupKey = (ll) => {
 };
 
 let revealCount = 0;
+let activeUntil = 0; // 이 시각까지는 매 프레임 다시 그린다 (걷힘 스프링·이동)
 function reveal(ll, born = now()) {
   const p = { lng: ll.lng, lat: ll.lat, mx: mercX(ll.lng), my: mercY(ll.lat), born };
+  activeUntil = Math.max(activeUntil, born + 2.5);
   state.points.push(p);
   occupied.add(dedupKey(p));
   markCells(p);
@@ -225,6 +235,8 @@ function frameForFog() {
   const canvas = map.getCanvas();
   const w = canvas.clientWidth, h = canvas.clientHeight;
   const c = map.getCenter();
+  // 패딩(앱 HUD)이 있으면 지도 중심은 캔버스 한가운데가 아니라 패딩을 뺀 영역의 가운데에 그려진다
+  const cp = map.project(c);
   const cmx = mercX(c.lng), cmy = mercY(c.lat);
   const world = 512 * Math.pow(2, map.getZoom());
   const ppm = world / (EARTH_C * Math.cos((c.lat * Math.PI) / 180));
@@ -235,8 +247,8 @@ function frameForFog() {
   if (blobBuf.length < state.points.length * 3) blobBuf = new Float32Array(state.points.length * 6);
   let n = 0;
   for (const p of state.points) {
-    const x = (p.mx - cmx) * world + w / 2;
-    const y = (p.my - cmy) * world + h / 2;
+    const x = (p.mx - cmx) * world + cp.x;
+    const y = (p.my - cmy) * world + cp.y;
     if (x < -margin || y < -margin || x > w + margin || y > h + margin) continue;
     const r = rBase * growth(t - p.born);
     if (r <= 0.01) continue;
@@ -246,7 +258,7 @@ function frameForFog() {
   return {
     blobs: blobBuf,
     count: n,
-    origin: [(mercX(state.origin.lng) - cmx) * world + w / 2, (mercY(state.origin.lat) - cmy) * world + h / 2],
+    origin: [(mercX(state.origin.lng) - cmx) * world + cp.x, (mercY(state.origin.lat) - cmy) * world + cp.y],
     ppm,
     time: t,
   };
@@ -255,18 +267,23 @@ function frameForFog() {
 // ---- 캐릭터 · 핀 · 안개 조각 ----
 const heroEl = document.createElement('div');
 heroEl.className = 'hero';
+// 반딧불 '반디': 꼬리 등불로 밤안개를 밝힌다
 heroEl.innerHTML = `
-  <div class="hero-shadow"></div>
+  <div class="hero-light"></div>
   <div class="hero-body">
+    <span class="wing l"></span><span class="wing r"></span>
+    <span class="antenna l"></span><span class="antenna r"></span>
+    <div class="hero-lamp"></div>
+    <div class="hero-shell"></div>
     <div class="hero-face">
       <span class="eye"></span><span class="eye"></span>
       <span class="blush"></span><span class="blush"></span>
       <span class="mouth"></span>
     </div>
-    <span class="sprout"></span>
   </div>`;
 const hero = new maplibregl.Marker({ element: heroEl, anchor: 'bottom' })
   .setLngLat([state.player.lng, state.player.lat]).addTo(map);
+if (APP) heroEl.hidden = true; // 첫 위치를 받기 전에는 숨긴다
 
 const pinEl = document.createElement('div');
 pinEl.className = 'pin';
@@ -274,17 +291,17 @@ pinEl.innerHTML = '<div class="pin-head"></div><div class="pin-dot"></div>';
 const pin = new maplibregl.Marker({ element: pinEl, anchor: 'bottom' });
 
 function spawnPuffs(ll) {
-  for (let i = 0; i < 3; i++) {
+  // 반딧불 불티가 위로 흩날린다
+  for (let i = 0; i < 5; i++) {
     // 마커 엘리먼트의 transform은 MapLibre가 위치용으로 쓰므로 애니메이션은 안쪽 요소에 건다
     const wrap = document.createElement('div');
     const el = document.createElement('div');
     el.className = 'puff';
     wrap.appendChild(el);
-    const a = Math.random() * Math.PI * 2;
-    el.style.setProperty('--dx', `${Math.cos(a) * (40 + Math.random() * 30)}px`);
-    el.style.setProperty('--dy', `${Math.sin(a) * (30 + Math.random() * 25) - 20}px`);
-    el.style.setProperty('--s', (0.7 + Math.random() * 0.6).toFixed(2));
-    el.style.animationDelay = `${i * 70}ms`;
+    el.style.setProperty('--dx', `${(Math.random() - 0.5) * 70}px`);
+    el.style.setProperty('--dy', `${-30 - Math.random() * 50}px`);
+    el.style.setProperty('--s', (0.6 + Math.random() * 0.7).toFixed(2));
+    el.style.animationDelay = `${i * 90}ms`;
     const m = new maplibregl.Marker({ element: wrap }).setLngLat([ll.lng, ll.lat]).addTo(map);
     el.addEventListener('animationend', () => m.remove(), { once: true });
   }
@@ -300,6 +317,7 @@ function moveBy(eastM, northM) {
 
 function update(dt) {
   let vx = 0, vy = 0;
+  if (APP) keys.clear();
   if (keys.has('ArrowLeft') || keys.has('KeyA')) vx -= 1;
   if (keys.has('ArrowRight') || keys.has('KeyD')) vx += 1;
   if (keys.has('ArrowUp') || keys.has('KeyW')) vy += 1;
@@ -314,7 +332,8 @@ function update(dt) {
     moving = true;
   } else if (state.target) {
     const d = distM(state.player, state.target);
-    const speed = Math.max(WALK_SPEED, state.target.dist / 3.5);
+    // 앱에서는 다음 위치가 올 즈음(약 5초 뒤) 도착하도록 실제 걸음처럼 미끄러진다
+    const speed = APP ? Math.max(1.5, state.target.dist / 4.5) : Math.max(WALK_SPEED, state.target.dist / 3.5);
     if (d <= speed * dt) {
       moveBy((state.target.lng - state.player.lng) * mPerDegLng(state.player.lat),
              (state.target.lat - state.player.lat) * mPerDegLat);
@@ -338,9 +357,10 @@ function update(dt) {
   heroEl.style.setProperty('--face', state.facing);
   hero.setLngLat([state.player.lng, state.player.lat]);
   if (moving) {
-    maybeReveal();
+    if (!APP) maybeReveal();
     if (state.follow) map.jumpTo({ center: [state.player.lng, state.player.lat] });
   }
+  return moving;
 }
 
 // ---- HUD ----
@@ -450,7 +470,7 @@ window.addEventListener('drop', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement) return;
+  if (APP || e.target instanceof HTMLInputElement) return;
   if (!sheet.hidden) {
     if (e.code === 'Escape') closeSheet();
     return;
@@ -467,6 +487,7 @@ window.addEventListener('blur', () => keys.clear());
 
 map.on('dragstart', () => { state.follow = false; });
 map.on('click', (e) => {
+  if (APP) return;
   setStroll(false);
   stopGeo();
   const ll = { lng: e.lngLat.lng, lat: e.lngLat.lat };
@@ -476,6 +497,129 @@ map.on('click', (e) => {
   pinEl.classList.remove('drop'); void pinEl.offsetWidth; pinEl.classList.add('drop');
 });
 
+// ---- 앱 브리지 ----
+// 앱은 페이지가 뜨면 'mistmap:port' 메시지와 함께 MessagePort 하나를 보내고, 이후 모든 메시지는 그 포트로 오간다.
+//   앱 → 웹: 칸 묶음 ArrayBuffer (WebView가 지원하지 않으면 같은 바이트를 {type:'cells', b64})
+//            [u8 종류(1=전체, 2=추가), 3바이트 비움, (u32 x, u32 y) 리틀 엔디언 반복]
+//            {type:'player', lng, lat}, {type:'insets', top, bottom}
+//   웹 → 앱: {type:'ready'}, {type:'error', message}
+const CELLS_SET = 1, CELLS_ADD = 2;
+const CELL_N = 2 ** CELL_LEVEL;
+function cellCenter(x, y) {
+  const mx = (x + 0.5) / CELL_N, my = (y + 0.5) / CELL_N;
+  return { lng: mx * 360 - 180, lat: (Math.atan(Math.sinh(Math.PI * (1 - 2 * my))) * 180) / Math.PI };
+}
+
+let hasFix = false;
+let hasOrigin = false;
+function setOriginOnce(ll) {
+  // 종이 무늬·등고선의 기준점. 사용자 근처에 두어야 셰이더 좌표가 커지지 않는다
+  if (hasOrigin) return;
+  hasOrigin = true;
+  state.origin = { ...ll };
+}
+
+function applyCells(buf) {
+  const view = new DataView(buf);
+  const kind = view.getUint8(0);
+  const count = (buf.byteLength - 4) >> 3;
+  if (kind === CELLS_SET) {
+    state.points = [];
+    state.cells.clear();
+    occupied.clear();
+  } else if (kind !== CELLS_ADD) {
+    console.warn('알 수 없는 칸 메시지', kind);
+    return;
+  }
+  const t0 = now();
+  for (let i = 0; i < count; i++) {
+    const ll = cellCenter(view.getUint32(4 + i * 8, true), view.getUint32(8 + i * 8, true));
+    setOriginOnce(ll);
+    if (kind === CELLS_SET) {
+      // 처음 열 때는 캐릭터에서 가까운 칸부터 차례로 걷힌다
+      reveal(ll, t0 + 0.4 + Math.min(distM(state.player, ll) / 1500, 1.6));
+    } else {
+      reveal(ll);
+    }
+  }
+}
+
+function movePlayer({ lng, lat }) {
+  const ll = { lng, lat };
+  setOriginOnce(ll);
+  if (!hasFix || distM(state.player, ll) > 300) {
+    hasFix = true;
+    heroEl.hidden = false;
+    state.player = ll;
+    state.target = null;
+    hero.setLngLat([lng, lat]);
+    if (state.follow) map.jumpTo({ center: [lng, lat] });
+    return;
+  }
+  state.target = { ...ll, dist: distM(state.player, ll) };
+}
+
+// 앱 HUD가 가리는 위·아래 높이(CSS px). 캐릭터는 보이는 영역 가운데에 오고, 버튼·안내는 HUD를 피한다
+function setInsets({ top = 0, bottom = 0 }) {
+  document.body.style.setProperty('--app-top', `${top}px`);
+  document.body.style.setProperty('--app-bottom', `${bottom}px`);
+  map.setPadding({ top, bottom, left: 0, right: 0 });
+}
+
+function base64ToBuffer(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+const native = (() => {
+  let port = null;
+  let ready = false;
+  const outbox = [];
+  const inbox = []; // 지도가 준비되기 전에 온 메시지
+
+  function send(msg) {
+    if (!APP) return;
+    const text = JSON.stringify(msg);
+    if (port) port.postMessage(text); else outbox.push(text);
+  }
+  function handle(data) {
+    if (!ready) { inbox.push(data); return; }
+    try {
+      if (data instanceof ArrayBuffer) { applyCells(data); return; }
+      const msg = JSON.parse(data);
+      if (msg.type === 'player') movePlayer(msg);
+      else if (msg.type === 'insets') setInsets(msg);
+      else if (msg.type === 'cells') applyCells(base64ToBuffer(msg.b64));
+      else console.warn('알 수 없는 앱 메시지', msg.type);
+    } catch (e) {
+      console.error(e);
+      send({ type: 'error', message: `메시지 처리 실패: ${e.message}` });
+    }
+  }
+
+  if (APP) {
+    window.addEventListener('message', (e) => {
+      if (port || e.data !== 'mistmap:port' || !e.ports?.[0]) return;
+      port = e.ports[0];
+      port.onmessage = (m) => handle(m.data);
+      outbox.splice(0).forEach((text) => port.postMessage(text));
+    });
+    // 지도 라이브러리를 못 받는 등(오프라인) 시작 단계의 실패도 앱이 알 수 있게 한다
+    window.addEventListener('error', (e) => send({ type: 'error', message: e.message }));
+  }
+
+  return {
+    send,
+    markReady() {
+      ready = true;
+      send({ type: 'ready' });
+      inbox.splice(0).forEach(handle);
+    },
+  };
+})();
+
 // ---- 시작 ----
 map.on('load', () => {
   try {
@@ -484,11 +628,14 @@ map.on('load', () => {
     console.error(e);
     $('fatal').textContent = e.message;
     $('fatal').hidden = false;
+    native.send({ type: 'error', message: e.message });
     return;
   }
 
   const t0 = now();
-  if (save?.points?.length) {
+  if (APP) {
+    // 칸과 위치는 앱이 보내 준다
+  } else if (save?.points?.length) {
     // 저장된 지점은 캐릭터에서 가까운 순으로 차례차례 걷힌다
     for (const [lng, lat] of save.points) {
       const d = distM(state.player, { lng, lat });
@@ -501,19 +648,25 @@ map.on('load', () => {
   }
   document.body.classList.add('ready');
 
-  let last = now();
+  native.markReady();
+
+  // 걷는 중이거나 걷힘 연출이 남아 있으면 매 프레임, 아니면 안개가 천천히 일렁이는 정도로만 다시 그린다
+  let last = now(), lastPaint = 0;
   const tick = () => {
     const t = now();
-    update(Math.min(t - last, 0.05));
+    if (update(Math.min(t - last, 0.05))) activeUntil = Math.max(activeUntil, t + 0.3);
     last = t;
-    updateHud();
-    map.triggerRepaint();
+    if (t < activeUntil || t - lastPaint >= 1 / IDLE_FPS) {
+      updateHud();
+      map.triggerRepaint();
+      lastPaint = t;
+    }
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
 });
 
 // ?debug: 개발 중 콘솔에서 시뮬레이션을 직접 돌릴 수 있게 노출
-if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles };
+if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles, frameForFog };
 
 map.on('error', (e) => console.warn('지도 오류', e.error ?? e));

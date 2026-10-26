@@ -2,13 +2,13 @@
 //
 // 1패스: 밝힌 지점마다 가우시안 블롭을 float 텍스처에 가산 합성 → "밝음 필드"
 // 2패스: 필드에서 경계까지의 거리 D를 추정해
-//        - D < 0  : 지도 노출 (경계 안쪽에 옅은 그림자)
-//        - D ≈ 0  : 잉크 경계선
-//        - D > 0  : 종이 + 경계를 감싸는 등고선 링 + 멀리 지형 등고선
-// 블롭 반경이 스프링으로 커지면 링들이 물결처럼 밀려나며 안개가 걷힌다.
+//        - D < 0  : 지도 노출 (가장자리에 따뜻한 그늘)
+//        - D ≈ 0  : 밝은 불빛 테
+//        - D > 0  : 남색 밤안개 + 별, 경계 가까이는 등불 빛이 번지고 안개가 옅어짐
+// 블롭 반경이 스프링으로 커지면 불빛이 밀려나며 밤안개가 걷힌다.
 
 const BLOB_EXTENT = 3.5; // 블롭 쿼드 반경 (블롭 반지름 배수). exp(-12.25)에서 잘림
-// 쿼드 경계에서 필드가 끊기므로 링은 그보다 안쪽(D < 1.9)에서 끝나야 직선 자국이 생기지 않는다
+// 쿼드 경계에서 필드가 끊기므로 빛 번짐은 그보다 안쪽(D < 1.9)에서 사라져야 직선 자국이 생기지 않는다
 
 const BLOB_VS = `#version 300 es
 in vec2 a_corner;
@@ -44,9 +44,12 @@ uniform float u_dpr;
 uniform float u_time;
 out vec4 o;
 
-const vec3 PAPER = vec3(0.957, 0.922, 0.851);
-const vec3 INK = vec3(0.24, 0.204, 0.169);
-const vec3 SOFT_INK = vec3(0.56, 0.49, 0.40);
+const vec3 NIGHT = vec3(0.098, 0.125, 0.239);  // 깊은 밤 남색
+const vec3 MIST = vec3(0.208, 0.247, 0.420);   // 흘러가는 밤안개
+const vec3 GLOW = vec3(1.0, 0.690, 0.330);     // 등불이 번진 빛
+const vec3 RIM = vec3(1.0, 0.937, 0.769);      // 경계의 가장 밝은 테
+const vec3 STAR = vec3(0.886, 0.902, 1.0);
+const vec3 EMBER = vec3(0.329, 0.196, 0.106);  // 드러난 땅 가장자리의 따뜻한 그늘
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -64,63 +67,60 @@ float fbm(vec2 p) {
   for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; }
   return v;
 }
-// 정수 등치선까지의 화면 거리 기반 안티앨리어싱 선
-float isoLine(float k, float widthPx) {
-  float w = fwidth(k);
-  float d = abs(fract(k + 0.5) - 0.5) / max(w, 1e-5);
-  return 1.0 - smoothstep(widthPx * 0.5, widthPx * 0.5 + 1.0, d);
-}
 vec4 over(vec4 top, vec4 bottom) { return top + bottom * (1.0 - top.a); }
+
+// 지도와 함께 움직이되 줌과 상관없이 같은 밀도로 깔리는 별
+float stars(vec2 sp) {
+  vec2 g = sp / 26.0;
+  vec2 cell = floor(g);
+  float r = hash12(cell);
+  if (r < 0.9) return 0.0;
+  vec2 pos = cell + 0.2 + 0.6 * vec2(hash12(cell + 7.3), hash12(cell + 19.1));
+  float d = length(g - pos) * 26.0;
+  float size = mix(0.7, 1.6, fract(r * 37.0));
+  float twinkle = 0.55 + 0.45 * sin(u_time * (0.8 + 2.4 * fract(r * 13.0)) + r * 40.0);
+  return smoothstep(size + 0.9, 0.0, d) * twinkle;
+}
 
 void main() {
   vec2 uv = gl_FragCoord.xy / u_res;
   vec2 px = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y);
   vec2 w = (px - u_origin) / u_ppm; // 미터 단위 세계 좌표
 
-  // 경계까지 거리 (블롭 반지름 단위). 손그림처럼 흔들리고 아주 천천히 숨 쉰다.
+  // 경계까지 거리 (블롭 반지름 단위). 가장자리가 연기처럼 흔들리고 아주 천천히 일렁인다.
   float f = texture(u_field, uv).r;
-  float wob = (fbm(w / 85.0) - 0.5) * 0.26
-            + (noise(w / 11.0 + u_time * 0.05) - 0.5) * 0.06
-            + sin(u_time * 0.7 + fbm(w / 60.0) * 6.283) * 0.015;
+  float wob = (fbm(w / 70.0 + u_time * 0.015) - 0.5) * 0.32
+            + (noise(w / 9.0 - u_time * 0.08) - 0.5) * 0.07;
   float D = sqrt(max(-log(max(f, 1e-6)), 0.0)) - 0.8326 + wob;
   float dPx = D / max(fwidth(D), 1e-5); // 경계까지 화면 px
 
-  float fog = smoothstep(-0.7, 0.7, dPx);
+  float fog = smoothstep(-1.0, 1.0, dPx);
 
-  // 종이: 큰 얼룩 + 미세 그레인 + 비네트
-  vec3 paper = PAPER * (0.965 + 0.06 * fbm(w / 380.0));
-  paper += (hash12(floor(px / u_dpr)) - 0.5) * 0.03;
-  float vig = smoothstep(1.15, 0.35, length((uv - 0.5) * vec2(u_res.x / u_res.y, 1.0)));
-  paper *= mix(0.93, 1.0, vig);
+  // 밤하늘: 남색 위로 큰 안개 덩어리가 천천히 흘러간다
+  float m = fbm(w / 460.0 + vec2(u_time * 0.006, u_time * 0.002));
+  float swirl = fbm(w / 150.0 - vec2(u_time * 0.012, 0.0));
+  vec3 fogCol = mix(NIGHT, MIST, smoothstep(0.42, 0.78, m) * 0.7 + (swirl - 0.5) * 0.18);
+  float vig = smoothstep(1.2, 0.3, length((uv - 0.5) * vec2(u_res.x / u_res.y, 1.0)));
+  fogCol *= mix(0.78, 1.0, vig);
+  fogCol += STAR * stars((px - u_origin) / u_dpr) * smoothstep(0.7, 1.8, D) * 0.9;
 
-  // 멀리 깔린 지형 등고선 (경계 근처에선 링에게 자리를 내준다)
-  float h = fbm(w / 520.0 + 3.7) + 0.35 * fbm(w / 170.0);
-  float k = h * 11.0;
-  float bold = step(abs(mod(floor(k + 0.5), 5.0)), 0.5);
-  float terr = isoLine(k, (0.9 + bold * 0.8) * u_dpr);
-  terr *= smoothstep(0.45, 0.12, fwidth(k)); // 축소 시 무아레 방지
-  terr *= smoothstep(0.35, 1.9, D) * (0.22 + bold * 0.14);
+  // 등불이 번진 빛: 경계 바깥으로 따뜻하게 퍼지고 숨 쉬듯 밝아졌다 어두워진다
+  float breathe = 0.88 + 0.12 * sin(u_time * 1.1);
+  float glow = exp(-max(D, 0.0) * 3.4) * breathe;
+  fogCol = mix(fogCol, GLOW, glow * 0.5);
+  // 경계 가까이에선 안개가 옅어져 그 너머의 지도가 어렴풋이 비친다
+  float alpha = fog * mix(0.66, 1.0, smoothstep(0.0, 1.1, D));
+  vec4 fogLayer = vec4(fogCol * alpha, alpha);
 
-  // 경계를 감싸는 링: 경계 가까이 촘촘하고 멀어질수록 넓어진다
-  float t = sqrt(max(D, 0.0) / 2.1) * 6.0;
-  float ring = isoLine(t, 1.1 * u_dpr) * step(0.5, t) * (1.0 - smoothstep(0.5, 1.85, D)) * 0.75;
-  // 축소해서 링 간격이 몇 px로 좁아지면 굵은 띠로 뭉치지 않게 흐리게 지운다
-  ring *= smoothstep(3.0, 7.0, 1.0 / max(fwidth(t), 1e-5) / u_dpr);
+  // 경계의 밝은 테
+  float rim = 1.0 - smoothstep(0.5 * u_dpr, 0.5 * u_dpr + 2.2, abs(dPx));
+  vec4 rimLayer = vec4(RIM, 1.0) * rim * 0.8 * breathe;
 
-  vec3 fogCol = paper;
-  fogCol = mix(fogCol, SOFT_INK, terr);
-  fogCol = mix(fogCol, INK, ring);
-  vec4 fogLayer = vec4(fogCol, 1.0) * fog;
+  // 드러난 땅의 가장자리는 불빛이 닿는 끝처럼 살짝 어둡고 따뜻하게
+  float shade = (1.0 - fog) * smoothstep(-0.5, 0.0, D) * 0.2;
+  vec4 shadeLayer = vec4(EMBER, 1.0) * shade;
 
-  // 경계 잉크선
-  float edge = 1.0 - smoothstep(1.1 * u_dpr, 1.1 * u_dpr + 1.2, abs(dPx));
-  vec4 edgeLayer = vec4(INK, 1.0) * edge;
-
-  // 안쪽 그림자: 안개 아래로 움푹 드러난 느낌
-  float shade = (1.0 - fog) * smoothstep(-0.45, 0.0, D) * 0.22;
-  vec4 shadeLayer = vec4(vec3(0.42, 0.33, 0.22), 1.0) * shade;
-
-  o = over(edgeLayer, over(fogLayer, shadeLayer));
+  o = over(rimLayer, over(fogLayer, shadeLayer));
 }`;
 
 function compile(gl, type, src) {
