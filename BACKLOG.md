@@ -4,7 +4,7 @@
 
 ## M2 가져오기 (2026-10-26)
 
-- [ ] **큰 파일 스트리밍 파싱** — 지금은 파일 전체를 문자열로 읽어 64MB에서 막음 · 몇 년 치 Records.json(수백 MB) 사용자 · `MapViewModel.readText`, `HistoryParser`
+- [ ] **큰 파일 스트리밍 파싱** — 지금은 파일 전체를 문자열로 읽어 힙의 1/16(최대 32MB)에서 막음 · 몇 년 치 Records.json(수백 MB) 사용자 · `MapViewModel.readText`, `HistoryParser`
 - [ ] **가져오기 진행률** — "읽는 중…" 문구만 있고 몇 %인지 없음 · 큰 파일 · `MapViewModel.importFrom`
 - [ ] **이동 수단별 필터** — 1.5km 안쪽의 차량 이동도 길로 이어져 걷지 않은 곳이 밝혀짐(웹 이슈 #2와 같은 문제) · 구글 타임라인 activity 구간 · `ImportPlanner`
 - [ ] **내보내기에 가져온 기록 포함 여부** — 지금 GPX는 걸어서 남긴 원시 위치만 담음 · 앱을 옮기려는 사용자 · `GpxExporter`

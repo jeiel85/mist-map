@@ -147,6 +147,10 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
         )
       } catch (e: ImportException) {
         show(Notice("$name: ${e.message}"))
+      } catch (e: OutOfMemoryError) {
+        // 상한 안쪽이어도 JSON 트리가 힙을 넘길 수 있다. 앱을 죽이지 않고 나눠 넣으라고 안내한다
+        Log.e(MistApp.TAG, "가져오기 메모리 부족: $uri", e)
+        show(Notice("$name: 이 휴대폰에서 한 번에 읽기엔 너무 커요. 기간을 나눠 내보낸 파일을 넣어 주세요"))
       } catch (e: Exception) {
         Log.e(MistApp.TAG, "가져오기 실패: $uri", e)
         show(Notice("$name 을(를) 읽다가 문제가 생겼어요."))
@@ -156,17 +160,39 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
     }
   }
 
-  /** 너무 큰 파일은 메모리를 넘기므로 미리 막는다. 몇 년 치 Records.json은 나눠 넣어야 한다. */
+  /**
+   * 너무 큰 파일은 메모리를 넘기므로 미리 막는다. 몇 년 치 Records.json은 나눠 넣어야 한다.
+   * 파일 전체가 문자열 → JSON 트리 → 경로로 불어나므로(대략 파일 크기의 10배 이상) 상한은 힙의 1/16로 잡는다.
+   * 크기를 알 수 있으면 읽기 전에 막고, 모르면 문자 단위로 읽다가 상한을 넘는 순간 멈춘다(바이트 버퍼를 두 벌 두지 않는다).
+   */
   private fun readText(uri: Uri): String? {
+    val limit = importLimitChars()
+    val tooBig = ImportException("파일이 너무 커요(${limit / 1_000_000}MB까지). 기간을 나눠 내보낸 파일을 넣어 주세요")
+    fileSize(uri)?.let { if (it > limit) throw tooBig }
     val resolver = getApplication<Application>().contentResolver
-    resolver.openInputStream(uri)?.use { input ->
-      val bytes = input.readNBytesCompat(MAX_IMPORT_BYTES + 1)
-      if (bytes.size > MAX_IMPORT_BYTES) {
-        throw ImportException("파일이 너무 커요(${MAX_IMPORT_BYTES / 1_000_000}MB까지). 기간을 나눠 내보낸 파일을 넣어 주세요")
+    resolver.openInputStream(uri)?.reader(Charsets.UTF_8)?.use { reader ->
+      val text = StringBuilder()
+      val buf = CharArray(64 * 1024)
+      while (true) {
+        val n = reader.read(buf)
+        if (n < 0) break
+        text.append(buf, 0, n)
+        if (text.length > limit) throw tooBig
       }
-      return bytes.toString(Charsets.UTF_8)
+      return text.toString()
     }
     return null
+  }
+
+  private fun importLimitChars(): Long = minOf(MAX_IMPORT_CHARS, Runtime.getRuntime().maxMemory() / 16)
+
+  private fun fileSize(uri: Uri): Long? = try {
+    getApplication<Application>().contentResolver
+      .query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+      ?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null }
+  } catch (e: Exception) {
+    Log.w(MistApp.TAG, "파일 크기를 읽지 못함: $uri", e)
+    null
   }
 
   private fun displayName(uri: Uri): String? = try {
@@ -250,19 +276,8 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
   }
 }
 
-private const val MAX_IMPORT_BYTES = 64_000_000
-
-/** InputStream.readNBytes는 API 33부터라 직접 읽는다. 최대 [limit]바이트 */
-private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
-  val out = java.io.ByteArrayOutputStream()
-  val buf = ByteArray(64 * 1024)
-  while (out.size() < limit) {
-    val n = read(buf, 0, minOf(buf.size, limit - out.size()))
-    if (n < 0) break
-    out.write(buf, 0, n)
-  }
-  return out.toByteArray()
-}
+/** 힙이 넉넉한 기기에서도 이보다 큰 파일은 받지 않는다 (글자 수 ≈ 바이트) */
+private const val MAX_IMPORT_CHARS = 32_000_000L
 
 /** 화면 위쪽에 잠깐 뜨는 안내. [action]이 있으면 눌렀을 때 실행한다. */
 data class Notice(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
