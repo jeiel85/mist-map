@@ -27,7 +27,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.os.PowerManager
 import com.jeiel85.mistmap.data.GpxExporter
+import com.jeiel85.mistmap.tracking.DayDiagnostics
+import com.jeiel85.mistmap.tracking.Diagnostics
 import com.jeiel85.mistmap.data.ImportSummary
 import com.jeiel85.mistmap.importers.HistoryParser
 import com.jeiel85.mistmap.importers.ImportException
@@ -43,6 +46,9 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
   private val _notice = MutableStateFlow<Notice?>(null)
   val notice = _notice.asStateFlow()
 
+  /** 안내를 눌러 기록 모음 시트를 열어 달라는 요청 */
+  val openRecordsRequest = MutableStateFlow(false)
+
   private val _rendererError = MutableStateFlow<String?>(null)
   val rendererError = _rendererError.asStateFlow()
 
@@ -56,7 +62,12 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
       (app as MistApp).startup.await()
       if (TrackingState.interrupted.value && status.value == TrackingState.Status.OFF) {
         TrackingState.interrupted.value = false
-        show(Notice("지난 기록이 중간에 끊겼어요. 휴대폰 절전 설정이 앱을 닫았을 수 있어요."))
+        show(
+          Notice(
+            "지난 기록이 중간에 끊겼어요. 휴대폰 절전이 앱을 닫았을 수 있어요.",
+            "기록 모음에서 확인",
+          ) { openRecordsRequest.value = true },
+        )
       }
     }
   }
@@ -232,6 +243,19 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
         _busy.value = null
       }
     }
+  }
+
+  // ---- 하루 종일 기록 (M3) ----
+
+  private val diagnosticsStore by lazy { Diagnostics(getApplication()) }
+
+  /** 오늘 기록 상태 (기록 모음 시트를 열 때 읽는다) */
+  fun diagnostics(): DayDiagnostics = diagnosticsStore.today()
+
+  /** 휴대폰 절전(배터리 최적화)이 이 앱을 제한하는지. 제한되면 기록이 끊길 수 있다 */
+  fun batteryRestricted(): Boolean {
+    val power = getApplication<Application>().getSystemService(PowerManager::class.java)
+    return !power.isIgnoringBatteryOptimizations(getApplication<Application>().packageName)
   }
 
   fun updateInsets(topDp: Int, bottomDp: Int) {

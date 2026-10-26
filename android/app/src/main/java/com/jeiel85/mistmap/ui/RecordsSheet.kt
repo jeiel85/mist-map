@@ -35,7 +35,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.PaddingValues
 import com.jeiel85.mistmap.data.ImportSummary
+import com.jeiel85.mistmap.tracking.DayDiagnostics
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -52,6 +54,9 @@ fun RecordsSheet(
   onExport: () -> Unit,
   onUndo: (ImportSummary) -> Unit,
   onDismiss: () -> Unit,
+  diagnostics: DayDiagnostics,
+  batteryRestricted: Boolean,
+  onOpenBatterySettings: () -> Unit,
 ) {
   var confirm by remember { mutableStateOf<ImportSummary?>(null) }
   ModalBottomSheet(
@@ -80,6 +85,9 @@ fun RecordsSheet(
         modifier = Modifier.padding(top = 8.dp),
       )
       busy?.let { Text(it, fontSize = 13.sp, color = Mist.Firefly, modifier = Modifier.padding(top = 10.dp)) }
+
+      Spacer(Modifier.height(18.dp))
+      DiagnosticsCard(diagnostics, batteryRestricted, onOpenBatterySettings)
 
       Spacer(Modifier.height(18.dp))
       Text("가져온 기록", style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.Moon))
@@ -121,6 +129,47 @@ fun RecordsSheet(
       dismissButton = { TextButton(onClick = { confirm = null }) { Text("그대로 두기", color = Mist.Moon) } },
     )
   }
+}
+
+/** 오늘 기록 상태: 하루 종일 기록이 끊기지 않았는지, GPS를 얼마나 켰는지 (M3) */
+@Composable
+private fun DiagnosticsCard(d: DayDiagnostics, batteryRestricted: Boolean, onOpenBatterySettings: () -> Unit) {
+  Text("오늘 기록 상태", style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.Moon))
+  GlowBox(Modifier.fillMaxWidth().padding(top = 6.dp), shape = RoundedCornerShape(16.dp)) {
+    Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Stat("기록", hm(d.recordingMs), Modifier.weight(1f))
+        Stat("GPS 켬", hm(d.gpsMs), Modifier.weight(1f))
+        Stat("쉬는 중", hm(d.sleepMs), Modifier.weight(1f))
+        Stat("끊김", "${d.gaps}번", Modifier.weight(1f))
+      }
+      if (batteryRestricted) {
+        Text(
+          "휴대폰 절전이 기록을 끊을 수 있어요. 앱 정보 › 배터리에서 '제한 없음'(삼성) 또는 '최적화 안 함'으로 바꿔 주세요.",
+          fontSize = 12.sp,
+          color = Mist.Pink,
+          modifier = Modifier.padding(top = 8.dp),
+        )
+        TextButton(onClick = onOpenBatterySettings, contentPadding = PaddingValues(0.dp)) {
+          Text("앱 정보 열기", color = Mist.Firefly, fontSize = 13.sp)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
+  Column(modifier) {
+    Text(value, style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.Moon))
+    Text(label, fontSize = 11.sp, color = Mist.MoonSoft)
+  }
+}
+
+/** 1시간 5분 → "1:05", 7분 → "0:07" */
+private fun hm(ms: Long): String {
+  val minutes = ms / 60_000
+  return "%d:%02d".format(minutes / 60, minutes % 60)
 }
 
 @Composable
