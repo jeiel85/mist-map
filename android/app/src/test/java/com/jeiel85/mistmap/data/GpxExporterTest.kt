@@ -1,6 +1,8 @@
 package com.jeiel85.mistmap.data
 
 import com.jeiel85.mistmap.importers.HistoryParser
+import com.jeiel85.mistmap.reveal.CellGrid
+import com.jeiel85.mistmap.reveal.LatLng
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,5 +31,13 @@ class GpxExporterTest {
     assertEquals(listOf(2, 1), back.tracks.map { it.size })
     assertEquals(37.5446, back.tracks[0][0].lat, 1e-9)
     assertEquals(129.0, back.tracks[1][0].lng, 1e-9)
+  }
+
+  @Test fun importedPlacesBecomeWaypointsThatReimportToTheSameCells() {
+    val cells = listOf(LatLng(37.5446, 127.0560), LatLng(35.1, 129.0)).map(CellGrid::cellId)
+    val out = StringWriter()
+    GpxExporter.write(emptyList(), out, cells.map(CellGrid::center))
+    val back = HistoryParser.parse(out.toString())
+    assertEquals(cells, back.tracks.map { CellGrid.cellId(it.single()) })
   }
 }

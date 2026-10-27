@@ -1,5 +1,6 @@
 package com.jeiel85.mistmap.tracking
 
+import android.content.Context
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,4 +25,16 @@ object TrackingState {
 
   /** 기록 중 문제(위치를 못 받음 등). 알림에 함께 보인다 */
   val warning = MutableStateFlow<String?>(null)
+
+  private const val PREFS = "tracking"
+  private const val KEY_STATUS = "status"
+
+  fun saveStatus(context: Context, status: Status) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_STATUS, status.name).apply()
+  }
+
+  /** 지난 프로세스가 남긴 상태. 기록 중이었다면 강제 종료로 끊긴 것이다 */
+  fun savedStatus(context: Context): Status =
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_STATUS, null)
+      ?.let { runCatching { Status.valueOf(it) }.getOrNull() } ?: Status.OFF
 }

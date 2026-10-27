@@ -15,6 +15,8 @@ data class DayDiagnostics(
   val sleepMs: Long,
   /** 위치를 2분 넘게 받지 못한 횟수 */
   val gaps: Int,
+  /** 끊기기 시작한 시각 ("HH:mm", 최근 10개) */
+  val gapTimes: List<String> = emptyList(),
 )
 
 /**
@@ -38,8 +40,11 @@ class Diagnostics(context: Context, private val zone: ZoneId = ZoneId.systemDefa
 
   fun addGap(at: Long = System.currentTimeMillis()) {
     val day = dayOf(at)
+    val time = Instant.ofEpochMilli(at).atZone(zone).toLocalTime().toString().take(5)
+    val times = (prefs.getString("$day.gapTimes", "")!!.split(',').filter { it.isNotEmpty() } + time).takeLast(10)
     prefs.edit {
       putInt("$day.gaps", prefs.getInt("$day.gaps", 0) + 1)
+      putString("$day.gapTimes", times.joinToString(","))
       dropOld(day)
     }
   }
@@ -51,6 +56,7 @@ class Diagnostics(context: Context, private val zone: ZoneId = ZoneId.systemDefa
       gpsMs = prefs.getLong("$day.gps", 0),
       sleepMs = prefs.getLong("$day.sleep", 0),
       gaps = prefs.getInt("$day.gaps", 0),
+      gapTimes = prefs.getString("$day.gapTimes", "")!!.split(',').filter { it.isNotEmpty() },
     )
   }
 

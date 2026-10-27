@@ -26,4 +26,12 @@ object CellGrid {
   fun x(cellId: Long): Long = cellId ushr LEVEL
 
   fun y(cellId: Long): Long = cellId and MASK
+
+  /** 칸 한가운데의 위경도 */
+  fun center(cellId: Long): LatLng {
+    val mx = (x(cellId) + 0.5) / N
+    val my = (y(cellId) + 0.5) / N
+    val lat = Math.toDegrees(kotlin.math.atan(kotlin.math.sinh(PI * (1 - 2 * my))))
+    return LatLng(lat, mx * 360.0 - 180.0)
+  }
 }

@@ -81,13 +81,14 @@ fun MapScreen(
       vm.openRecordsRequest.value = false
     }
   }
-  // 걷는 동안 간단히 보기(절전): 기록 중 1분 동안 손대지 않으면 들어가고, 누르면 지도로 돌아온다
+  // 걷는 동안 간단히 보기(절전): 기록 중 정한 시간 동안 손대지 않으면 들어가고(기본 1분, 기록 모음에서 바꿈), 누르면 지도로
   var simple by rememberSaveable { mutableStateOf(false) }
   var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
-  LaunchedEffect(status, lastTouch, simple, showRecords) {
+  val simpleAfter by vm.simpleAfterSec.collectAsStateWithLifecycle()
+  LaunchedEffect(status, lastTouch, simple, showRecords, simpleAfter) {
     if (status == Status.OFF) simple = false
-    if (status != Status.RECORDING || simple || showRecords) return@LaunchedEffect
-    delay(SIMPLE_AFTER_MS)
+    if (status != Status.RECORDING || simple || showRecords || simpleAfter <= 0) return@LaunchedEffect
+    delay(simpleAfter * 1000L)
     simple = true
   }
   LaunchedEffect(simple) { onDim(simple) }
@@ -155,17 +156,30 @@ fun MapScreen(
     }
 
     busy?.let {
-      Text(
-        it,
-        color = Mist.Night,
-        fontSize = 13.sp,
-        modifier = Modifier
+      val cancellable by vm.cancellable.collectAsStateWithLifecycle()
+      Row(
+        Modifier
           .align(Alignment.TopCenter)
           .windowInsetsPadding(WindowInsets.statusBars)
           .padding(top = TOP_BAR + 52.dp)
           .background(Mist.Firefly, RoundedCornerShape(999.dp))
-          .padding(horizontal = 16.dp, vertical = 6.dp),
-      )
+          .padding(start = 16.dp, end = if (cancellable) 4.dp else 16.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(it, color = Mist.Night, fontSize = 13.sp)
+        if (cancellable) {
+          Text(
+            "취소",
+            color = Mist.Night,
+            fontSize = 13.sp,
+            modifier = Modifier
+              .padding(start = 10.dp)
+              .background(Mist.Night.copy(alpha = 0.12f), RoundedCornerShape(999.dp))
+              .clickable(role = Role.Button, onClick = vm::cancelImport)
+              .padding(horizontal = 10.dp, vertical = 2.dp),
+          )
+        }
+      }
     }
 
     if (showRecords) {
@@ -174,11 +188,14 @@ fun MapScreen(
         busy = busy,
         onImport = { showRecords = false; onImport() },
         onExport = { showRecords = false; onExport() },
-        onUndo = vm::undoImport,
+        // 되살리기 안내가 시트 흐림막 뒤에 깔리지 않게 시트를 닫고 지도 위에 띄운다
+        onUndo = { showRecords = false; vm.undoImport(it) },
         onDismiss = { showRecords = false },
         diagnostics = vm.diagnostics(),
         batteryRestricted = vm.batteryRestricted(),
         onOpenBatterySettings = onOpenBatterySettings,
+        simpleAfterSec = simpleAfter,
+        onSimpleAfterChange = vm::setSimpleAfter,
       )
     }
 
@@ -210,7 +227,6 @@ fun MapScreen(
 }
 
 private val TOP_BAR = 56.dp
-private const val SIMPLE_AFTER_MS = 60_000L
 
 @Composable
 private fun TopPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -319,7 +335,7 @@ private fun HandButton(label: String, onClick: () -> Unit, primary: Boolean = fa
 @Composable
 private fun NoticePill(notice: Notice, onDismiss: () -> Unit) {
   LaunchedEffect(notice) {
-    delay(if (notice.action != null) 8_000 else 4_500)
+    delay(if (notice.action != null) 12_000 else 4_500)
     onDismiss()
   }
   Row(

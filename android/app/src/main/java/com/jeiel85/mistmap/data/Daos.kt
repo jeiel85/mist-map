@@ -24,6 +24,12 @@ interface CellDao {
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   suspend fun linkAll(links: List<CellOriginEntity>)
 
+  @Query("SELECT cellId FROM cell_origin WHERE originId = :originId")
+  suspend fun idsOf(originId: Long): List<Long>
+
+  @Query("SELECT DISTINCT co.cellId FROM cell_origin co JOIN origin o ON o.id = co.originId WHERE o.kind = :kind")
+  suspend fun idsOfKind(kind: String): List<Long>
+
   /** [originId]에만 속한 칸을 지운다. 다른 출처(실시간 기록·다른 파일)도 밝힌 칸은 남는다. */
   @Query(
     "DELETE FROM cell WHERE cellId IN (SELECT cellId FROM cell_origin WHERE originId = :originId) " +
@@ -74,6 +80,9 @@ interface OriginDao {
 
   @Query("DELETE FROM origin WHERE id = :id")
   suspend fun delete(id: Long)
+
+  @Query("SELECT label FROM origin WHERE id = :id")
+  suspend fun labelOf(id: Long): String?
 
   @Query("DELETE FROM cell_origin WHERE originId = :id")
   suspend fun deleteLinks(id: Long)

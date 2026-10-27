@@ -24,9 +24,13 @@ class MistApp : Application() {
   override fun onCreate() {
     super.onCreate()
     startup = appScope.async {
-      // 프로세스가 새로 떴다면 열린 세션은 모두 강제 종료로 끊긴 것이다 (재시작하지 않음, D3)
+      // 프로세스가 새로 떴다면 열린 세션은 모두 닫는다 (재시작하지 않음, D3).
+      // 기록 중이던 채 죽었으면 끊긴 것이라 알리고, 일시정지해 둔 채였다면 알리지 않는다
       val dangling = repository.closeDanglingSessions()
-      if (dangling > 0) TrackingState.interrupted.value = true
+      if (dangling > 0 && TrackingState.savedStatus(this@MistApp) == TrackingState.Status.RECORDING) {
+        TrackingState.interrupted.value = true
+      }
+      TrackingState.saveStatus(this@MistApp, TrackingState.Status.OFF)
       val pruned = repository.pruneOldFixes()
       if (pruned > 0) Log.i(TAG, "30일 지난 원시 위치 $pruned 건 삭제")
     }

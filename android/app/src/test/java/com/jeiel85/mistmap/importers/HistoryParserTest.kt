@@ -143,8 +143,111 @@ class HistoryParserTest {
   @Test fun googleTimelineSampleMatchesWeb() {
     val r = HistoryParser.parse(sample("google-timeline-sample.json"))
     assertEquals("구글 타임라인", r.format)
-    assertEquals(listOf(1, 50, 2, 1), sizes(r))
+    // 샘플의 지하철(IN_SUBWAY) 구간과 그 시간대의 경로 점은 빠진다 (웹 파서 결과와 같음: [1,20,1], 1구간)
+    assertEquals(listOf(1, 20, 1), sizes(r))
+    assertEquals(1, r.vehicleSkipped)
     near(r.tracks[0][0], 37.5404, 127.0692)
     near(r.tracks.last().last(), 37.5612, 127.0371)
+  }
+
+  // ---- 차량 구간 빼기 (tests/importers.test.js와 같은 입력) ----
+
+  @Test fun androidExportDropsVehicleActivityAndSplitsPath() {
+    val r = HistoryParser.parse(
+      """{"semanticSegments":[
+        {"startTime":"2026-10-01T09:00:00.000+09:00","endTime":"2026-10-01T09:30:00.000+09:00","timelinePath":[
+          {"point":"37.50°, 127.00°","time":"2026-10-01T09:00:00.000+09:00"},
+          {"point":"37.51°, 127.01°","time":"2026-10-01T09:05:00.000+09:00"},
+          {"point":"37.60°, 127.10°","time":"2026-10-01T09:15:00.000+09:00"},
+          {"point":"37.70°, 127.20°","time":"2026-10-01T09:25:00.000+09:00"}]},
+        {"startTime":"2026-10-01T09:10:00.000+09:00","endTime":"2026-10-01T09:20:00.000+09:00",
+         "activity":{"start":{"latLng":"37.51°, 127.01°"},"end":{"latLng":"37.69°, 127.19°"},"topCandidate":{"type":"IN_BUS","probability":0.8}}},
+        {"startTime":"2026-10-01T09:20:00.000+09:00","endTime":"2026-10-01T09:30:00.000+09:00",
+         "activity":{"start":{"latLng":"37.69°, 127.19°"},"end":{"latLng":"37.70°, 127.20°"},"topCandidate":{"type":"WALKING"}}}
+      ]}""",
+    )
+    assertEquals(listOf(2, 1, 2), sizes(r))
+    assertEquals(1, r.vehicleSkipped)
+  }
+
+  @Test fun iosTakeoutAndRecordsDropVehicle() {
+    val ios = HistoryParser.parse(
+      """[
+        {"startTime":"2026-10-01T09:00:00Z","endTime":"2026-10-01T09:20:00Z","activity":{"start":"geo:37.5,127.0","end":"geo:37.6,127.1","topCandidate":{"type":"in passenger vehicle"}}},
+        {"startTime":"2026-10-01T09:00:00Z","timelinePath":[
+          {"point":"geo:37.50,127.00","durationMinutesOffsetFromStartTime":"10"},
+          {"point":"geo:37.61,127.11","durationMinutesOffsetFromStartTime":"30"}]}
+      ]""",
+    )
+    assertEquals(listOf(1), sizes(ios))
+    assertEquals(1, ios.vehicleSkipped)
+
+    val sem = HistoryParser.parse(
+      """{"timelineObjects":[
+        {"activitySegment":{"activityType":"IN_SUBWAY",
+          "startLocation":{"latitudeE7":375000000,"longitudeE7":1270000000},"endLocation":{"latitudeE7":376000000,"longitudeE7":1271000000}}},
+        {"activitySegment":{"activityType":"WALKING",
+          "startLocation":{"latitudeE7":376000000,"longitudeE7":1271000000},"endLocation":{"latitudeE7":376010000,"longitudeE7":1271010000}}}
+      ]}""",
+    )
+    assertEquals(listOf(2), sizes(sem))
+    assertEquals(1, sem.vehicleSkipped)
+
+    val rec = HistoryParser.parse(
+      """{"locations":[
+        {"latitudeE7":375000000,"longitudeE7":1270000000},
+        {"latitudeE7":375100000,"longitudeE7":1270100000,"activity":[{"activity":[{"type":"IN_VEHICLE","confidence":90}]}]},
+        {"latitudeE7":375200000,"longitudeE7":1270200000}
+      ]}""",
+    )
+    assertEquals(listOf(1, 1), sizes(rec))
+    assertEquals(1, rec.vehicleSkipped)
+  }
+
+  // ---- 스트리밍 ----
+
+  @Test fun streamsLargeRecordsWithoutCollectingTracks() {
+    // 20만 점 Records.json (약 10MB). 받는 쪽은 점을 세기만 해서, 파서가 경로 목록을 만들지 않고도 끝까지 읽는지 본다
+    val n = 200_000
+    val json = buildString {
+      append("{\"locations\":[")
+      for (i in 0 until n) {
+        if (i > 0) append(',')
+        append("{\"latitudeE7\":").append(375000000 + i).append(",\"longitudeE7\":").append(1270000000 + i).append('}')
+      }
+      append("]}")
+    }
+    var points = 0
+    var tracks = 0
+    var checks = 0
+    val summary = HistoryParser.stream(
+      json.byteInputStream(),
+      object : TrackSink {
+        override fun point(p: LatLng) { points++ }
+        override fun endTrack() { tracks++ }
+      },
+      checkCancelled = { checks++ },
+    )
+    assertEquals(n, summary.points)
+    assertEquals(n, points)
+    assertEquals(1, tracks)
+    assertEquals(n, checks) // 요소마다 취소 여부를 묻는다
+  }
+
+  @Test fun cancellationStopsStreaming() {
+    val json = "{\"locations\":[" + (0 until 1000).joinToString(",") { "{\"latitudeE7\":375000000,\"longitudeE7\":1270000000}" } + "]}"
+    // 가져오기 취소는 코루틴의 CancellationException으로 온다. 형식 오류("읽을 수 없어요")로 바뀌면 안 된다
+    var seen = 0
+    val e = assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+      HistoryParser.stream(
+        json.byteInputStream(),
+        object : TrackSink {
+          override fun point(p: LatLng) {}
+          override fun endTrack() {}
+        },
+        checkCancelled = { if (++seen > 10) throw kotlinx.coroutines.CancellationException("취소") },
+      )
+    }
+    assertEquals("취소", e.message)
   }
 }
