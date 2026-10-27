@@ -13,7 +13,9 @@ const SAMPLES = path.join(__dirname, '..', 'samples');
   const browser = await launch();
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   const errors = [];
-  page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) errors.push(m.text()); });
+  // GL 드라이버 성능 알림(스크린샷을 찍으며 Chrome이 픽셀을 읽을 때 CI의 GL이 냄)은 앱 오류가 아니다
+  const driverNote = /GL Driver Message \([^)]*, Performance,/;
+  page.on('console', (m) => { if (['error', 'warning'].includes(m.type()) && !driverNote.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
   const toastAfter = async (ms) => { await page.waitForTimeout(ms); return page.textContent('#toast'); };
 
