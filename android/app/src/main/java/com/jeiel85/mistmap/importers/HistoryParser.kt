@@ -199,7 +199,7 @@ object HistoryParser {
   private fun parseJson(input: InputStream, sink: CountingSink, checkCancelled: () -> Unit): Pair<String, Int> {
     val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8))
     try {
-      val timeline = TimelineCollector(sink)
+      val timeline = TimelineCollector(sink, checkCancelled)
       if (reader.peek() == JsonToken.BEGIN_ARRAY) {
         // iOS 타임라인 내보내기: 최상위가 구간 배열
         reader.beginArray()
@@ -329,7 +329,7 @@ object HistoryParser {
    * 1·2는 차량 활동의 시간대를 알아야 경로 점을 거를 수 있어 구간을 모았다가 [finish]에서 내보낸다(웹과 같은 순서).
    * 3·4는 받는 대로 내보낸다.
    */
-  private class TimelineCollector(private val sink: CountingSink) {
+  private class TimelineCollector(private val sink: CountingSink, private val checkCancelled: () -> Unit) {
     private sealed interface Item
     private class Path(val points: List<Pair<LatLng?, Long?>>) : Item
     private class Activity(val start: LatLng?, val end: LatLng?, val vehicle: Boolean) : Item
@@ -408,9 +408,10 @@ object HistoryParser {
 
     /** @return 뺀 차량 구간 수 */
     fun finish(): Int {
-      val inVehicle = { t: Long? -> t != null && vehicleWindows.any { t in it } }
+      val inVehicle = windowLookup(vehicleWindows)
       for (item in items) when (item) {
         is Path -> {
+          checkCancelled()
           for ((point, t) in item.points) {
             if (inVehicle(t)) sink.endTrack() else point?.let(sink::point)
           }
@@ -421,12 +422,37 @@ object HistoryParser {
       }
       // 원시 위치도 차량 구간 시간에 든 것은 빼고 그 자리에서 끊는다
       if (raw.isNotEmpty()) {
-        for ((point, t) in raw) {
+        for ((i, entry) in raw.withIndex()) {
+          if (i % 1024 == 0) checkCancelled()
+          val (point, t) = entry
           if (inVehicle(t)) sink.endTrack() else sink.point(point)
         }
         sink.endTrack()
       }
       return skipped
+    }
+  }
+
+  /** 시간 구간들을 정렬·병합해 두고, 시각이 그중 하나에 드는지 이분 탐색으로 답한다(웹 `windowLookup`과 같음) */
+  private fun windowLookup(windows: List<LongRange>): (Long?) -> Boolean {
+    val merged = mutableListOf<LongArray>()
+    for (w in windows.sortedBy { it.first }) {
+      val last = merged.lastOrNull()
+      if (last != null && w.first <= last[1]) last[1] = maxOf(last[1], w.last) else merged += longArrayOf(w.first, w.last)
+    }
+    return lookup@{ t ->
+      if (t == null) return@lookup false
+      var lo = 0
+      var hi = merged.size - 1
+      while (lo <= hi) {
+        val mid = (lo + hi) ushr 1
+        when {
+          t < merged[mid][0] -> hi = mid - 1
+          t > merged[mid][1] -> lo = mid + 1
+          else -> return@lookup true
+        }
+      }
+      false
     }
   }
 

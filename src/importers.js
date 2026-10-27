@@ -179,6 +179,27 @@ const timeOf = (iso) => {
   return Number.isFinite(t) ? t : null;
 };
 
+/** 시간 구간들을 정렬·병합해 두고, 시각이 그중 하나에 드는지 이분 탐색으로 답한다(몇 년 치 기록도 점마다 전부 훑지 않게) */
+function windowLookup(windows) {
+  const merged = [];
+  for (const [a, b] of [...windows].sort((x, y) => x[0] - y[0])) {
+    const last = merged.at(-1);
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else merged.push([a, b]);
+  }
+  return (t) => {
+    if (t === null || !merged.length) return false;
+    let lo = 0, hi = merged.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (t < merged[mid][0]) hi = mid - 1;
+      else if (t > merged[mid][1]) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  };
+}
+
 function segmentsToTracks(segments, rawSignals = []) {
   // 차량 활동 구간의 시간대. 경로(timelinePath) 점 중 이 시간에 든 것은 빼고 그 자리에서 경로를 끊는다
   const vehicleWindows = [];
@@ -188,7 +209,7 @@ function segmentsToTracks(segments, rawSignals = []) {
       if (from !== null && to !== null) vehicleWindows.push([from, to]);
     }
   }
-  const inVehicle = (t) => t !== null && vehicleWindows.some(([a, b]) => t >= a && t <= b);
+  const inVehicle = windowLookup(vehicleWindows);
 
   const tracks = [];
   let vehicleSkipped = 0;

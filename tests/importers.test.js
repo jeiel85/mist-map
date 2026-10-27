@@ -194,3 +194,24 @@ test('구글 타임라인 Android: 원시 위치도 차량 구간 시간이면 �
   assert.deepEqual(r.tracks.map((t) => t.length), [1, 2]);
   assert.equal(r.vehicleSkipped, 1);
 });
+
+test('구글 타임라인: 차량 구간이 많아도 빨리 거른다', () => {
+  // 차량 구간 8,000개 + 걷기 경로 점 80,000개. 점마다 구간을 전부 훑으면 수 초 걸리던 크기
+  const base = Date.parse('2026-01-01T00:00:00Z');
+  const segments = [];
+  for (let i = 0; i < 8000; i++) {
+    const from = base + i * 3_600_000;
+    segments.push({ startTime: new Date(from).toISOString(), endTime: new Date(from + 600_000).toISOString(),
+      activity: { start: 'geo:37.5,127.0', end: 'geo:37.6,127.1', topCandidate: { type: 'IN_BUS' } } });
+  }
+  const path = [];
+  for (let i = 0; i < 80000; i++) {
+    path.push({ point: `geo:${(37.5 + (i % 1000) * 1e-5).toFixed(5)},127.0`, time: new Date(base + 1_200_000 + i * 1000).toISOString() });
+  }
+  segments.push({ startTime: new Date(base).toISOString(), endTime: new Date(base + 9e7).toISOString(), timelinePath: path });
+  const t0 = Date.now();
+  const r = parseHistory(JSON.stringify({ semanticSegments: segments }));
+  const ms = Date.now() - t0;
+  assert.equal(r.vehicleSkipped, 8000);
+  assert.ok(ms < 2000, `${ms}ms`);
+});

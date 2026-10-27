@@ -186,6 +186,31 @@ class HistoryParserTest {
     assertEquals(1, r.vehicleSkipped)
   }
 
+  @Test fun manyVehicleWindowsFilterQuickly() {
+    // 차량 구간 8,000개 + 걷기 경로 점 80,000개(웹 테스트와 같은 크기). 점마다 구간을 전부 훑으면 수 초 걸린다
+    val base = java.time.Instant.parse("2026-01-01T00:00:00Z")
+    val json = buildString {
+      append("{\"semanticSegments\":[")
+      for (i in 0 until 8000) {
+        val from = base.plusSeconds(i * 3600L)
+        append("{\"startTime\":\"").append(from).append("\",\"endTime\":\"").append(from.plusSeconds(600))
+        append("\",\"activity\":{\"start\":\"geo:37.5,127.0\",\"end\":\"geo:37.6,127.1\",\"topCandidate\":{\"type\":\"IN_BUS\"}}},")
+      }
+      append("{\"startTime\":\"").append(base).append("\",\"endTime\":\"").append(base.plusSeconds(90_000)).append("\",\"timelinePath\":[")
+      for (i in 0 until 80_000) {
+        if (i > 0) append(',')
+        append("{\"point\":\"geo:").append("%.5f".format(37.5 + (i % 1000) * 1e-5)).append(",127.0\",\"time\":\"")
+        append(base.plusSeconds(1200L + i)).append("\"}")
+      }
+      append("]}]}")
+    }
+    val t0 = System.currentTimeMillis()
+    val r = HistoryParser.parse(json)
+    val ms = System.currentTimeMillis() - t0
+    assertEquals(8000, r.vehicleSkipped)
+    assertTrue("${ms}ms", ms < 5000)
+  }
+
   @Test fun iosTakeoutAndRecordsDropVehicle() {
     val ios = HistoryParser.parse(
       """[

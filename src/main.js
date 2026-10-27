@@ -89,6 +89,27 @@ function loadSave() {
 let saveTimer = 0;
 let storageWarned = false;
 const STORAGE_WARN_CHARS = 4_000_000;
+/**
+ * v2를 쓰고 예전 v1을 지운다. v1이 저장소 절반 넘게 차지하면 둘이 함께 들어가지 못하므로,
+ * 자리가 모자라면 v1을 먼저 치우고 다시 쓴다. 그래도 실패하면 v1을 되돌려 놓아 기록을 잃지 않는다.
+ */
+function writeSave(json) {
+  try {
+    localStorage.setItem(STORAGE_KEY, json);
+  } catch (e) {
+    const old = localStorage.getItem(STORAGE_KEY_V1);
+    if (old === null) throw e;
+    localStorage.removeItem(STORAGE_KEY_V1);
+    try {
+      localStorage.setItem(STORAGE_KEY, json);
+    } catch (e2) {
+      localStorage.setItem(STORAGE_KEY_V1, old);
+      throw e2;
+    }
+  }
+  localStorage.removeItem(STORAGE_KEY_V1);
+}
+
 function scheduleSave() {
   if (APP) return;
   clearTimeout(saveTimer);
@@ -103,8 +124,7 @@ function scheduleSave() {
       const json = JSON.stringify({
         v: 2, origin: state.origin, player: state.player, walkedM: state.walkedM, imports: state.imports, pts,
       });
-      localStorage.setItem(STORAGE_KEY, json);
-      localStorage.removeItem(STORAGE_KEY_V1);
+      writeSave(json);
       // 브라우저 저장소는 보통 5MB. 다 차기 전에 한 번 알린다 (앱은 기기 DB라 해당 없음)
       if (json.length > STORAGE_WARN_CHARS && !storageWarned) {
         storageWarned = true;
