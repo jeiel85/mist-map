@@ -10,4 +10,3 @@
 - [ ] **실제 내보내기 파일로 형식 검증** — 구글 타임라인 Android/iOS 형식은 공개 문서가 없어 알려진 구조와 샘플로만 시험함 · 형식이 바뀌면 "알 수 없는 JSON"으로 실패 · `src/importers.js`, `HistoryParser.kt`
 - [ ] **쉬는 중 확인 간격** — 10분 → 5분으로 줄였지만, 활동 인식이 놓치면 최대 5분 길이 직선으로 이어짐 · 정지 오판 · `TrackingService.SLEEP_CHECK_MS`
 - [ ] **끊긴 곳 지도 표시** — 끊긴 시각(최근 10번)은 남기지만 위치는 남기지 않음 · 실사용 진단 · `Diagnostics`
-- [ ] **헤드리스 Chrome 점검을 CI로** — `tools/`의 e2e·앱 모드·컨텍스트 복구 점검이 로컬에서만 돎 · 웹 회귀 · `.github/workflows/ci.yml`
