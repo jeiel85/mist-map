@@ -177,3 +177,20 @@ test('구글 타임라인 iOS·테이크아웃: 차량 구간 빼기', () => {
   assert.deepEqual(rec.tracks.map((t) => t.length), [1, 1]);
   assert.equal(rec.vehicleSkipped, 1);
 });
+
+test('구글 타임라인 Android: 원시 위치도 차량 구간 시간이면 빼고 끊기', () => {
+  const r = parseHistory(JSON.stringify({
+    semanticSegments: [
+      { startTime: '2026-10-01T09:00:00.000+09:00', endTime: '2026-10-01T09:20:00.000+09:00',
+        activity: { start: { latLng: '37.50°, 127.00°' }, end: { latLng: '37.60°, 127.10°' }, topCandidate: { type: 'IN_BUS' } } },
+    ],
+    rawSignals: [
+      { position: { LatLng: '37.49°, 126.99°', timestamp: '2026-10-01T08:55:00.000+09:00' } },
+      { position: { LatLng: '37.55°, 127.05°', timestamp: '2026-10-01T09:10:00.000+09:00' } }, // 버스 안
+      { position: { LatLng: '37.61°, 127.11°', timestamp: '2026-10-01T09:25:00.000+09:00' } },
+      { position: { LatLng: '37.62°, 127.12°' } }, // 시각 없음: 남긴다
+    ],
+  }));
+  assert.deepEqual(r.tracks.map((t) => t.length), [1, 2]);
+  assert.equal(r.vehicleSkipped, 1);
+});

@@ -131,7 +131,8 @@ function markCells(p) {
   }
 }
 
-const occupied = new Set();
+/** 중복 격자 키 → 그 자리에 처음 놓인 지점. 걸어서 지나간 가져온 지점을 걸음으로 바꿀 때도 쓴다 */
+const occupied = new Map();
 
 // 화면 안 지점만 빨리 찾도록 메르카토르 14단계 타일(서울 약 1.9km)로 묶어 둔다.
 // 칸이 수십만 개여도 한 프레임에 화면 근처 타일만 본다 (이슈 #4)
@@ -160,7 +161,7 @@ function reveal(ll, born = now(), src = 0) {
   activeUntil = Math.max(activeUntil, born + 2.5);
   state.points.push(p);
   indexAdd(p);
-  occupied.add(dedupKey(p));
+  occupied.set(dedupKey(p), p);
   markCells(p);
   if (revealCount++ % 3 === 0 && Math.abs(born - now()) < 0.1) spawnPuffs(ll);
   return p;
@@ -171,7 +172,12 @@ let lastSample = null;
 function maybeReveal() {
   if (lastSample && distM(lastSample, state.player) < SAMPLE_SPACING_M) return;
   lastSample = { ...state.player };
-  if (occupied.has(dedupKey(state.player))) return;
+  const there = occupied.get(dedupKey(state.player));
+  if (there) {
+    // 가져온 곳을 걸어서 지나가면 걸음으로 남긴다: 그 파일을 되돌려도 걸은 곳은 사라지지 않는다
+    if (there.src !== 0) { there.src = 0; scheduleSave(); }
+    return;
+  }
   reveal(state.player);
   scheduleSave();
 }
@@ -263,7 +269,7 @@ function undoImport(id) {
   state.imports = state.imports.filter((i) => i.id !== id);
   occupied.clear();
   state.cells.clear();
-  for (const p of state.points) { occupied.add(dedupKey(p)); markCells(p); }
+  for (const p of state.points) { occupied.set(dedupKey(p), p); markCells(p); }
   rebuildIndex();
   activeUntil = now() + 0.5;
   scheduleSave();

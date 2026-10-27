@@ -134,10 +134,7 @@ function parseGoogleTimeline(d) {
   if (!d || typeof d !== 'object') return null;
 
   if (Array.isArray(d.semanticSegments) || Array.isArray(d.rawSignals)) {
-    const result = segmentsToTracks(d.semanticSegments ?? []);
-    const raw = (d.rawSignals ?? []).map((s) => latLng(s.position?.LatLng ?? s.position?.latLng)).filter(Boolean);
-    if (raw.length) result.tracks.push(raw);
-    return result;
+    return segmentsToTracks(d.semanticSegments ?? [], d.rawSignals ?? []);
   }
   if (Array.isArray(d.locations)) {
     // 점마다 붙은 활동 추정이 차량이면 그 점에서 경로를 끊는다
@@ -182,7 +179,7 @@ const timeOf = (iso) => {
   return Number.isFinite(t) ? t : null;
 };
 
-function segmentsToTracks(segments) {
+function segmentsToTracks(segments, rawSignals = []) {
   // 차량 활동 구간의 시간대. 경로(timelinePath) 점 중 이 시간에 든 것은 빼고 그 자리에서 경로를 끊는다
   const vehicleWindows = [];
   for (const s of segments) {
@@ -219,6 +216,17 @@ function segmentsToTracks(segments) {
     const v = latLng(s.visit?.topCandidate?.placeLocation);
     if (v) tracks.push([v]);
   }
+  // 원시 위치도 차량 구간 시간에 든 것은 빼고 그 자리에서 끊는다
+  let raw = [];
+  for (const r of rawSignals) {
+    if (inVehicle(timeOf(r.position?.timestamp))) {
+      if (raw.length) { tracks.push(raw); raw = []; }
+      continue;
+    }
+    const ll = latLng(r.position?.LatLng ?? r.position?.latLng);
+    if (ll) raw.push(ll);
+  }
+  if (raw.length) tracks.push(raw);
   return { tracks, vehicleSkipped };
 }
 

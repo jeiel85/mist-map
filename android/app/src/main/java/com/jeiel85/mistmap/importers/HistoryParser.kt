@@ -337,7 +337,8 @@ object HistoryParser {
 
     private val items = mutableListOf<Item>()
     private val vehicleWindows = mutableListOf<LongRange>()
-    private val raw = mutableListOf<LatLng>()
+    // 원시 위치는 차량 구간 시간을 다 안 뒤에 거르므로 시각과 함께 모아 둔다
+    private val raw = mutableListOf<Pair<LatLng, Long?>>()
     private var skipped = 0
     var sawSegment = false
       private set
@@ -373,7 +374,7 @@ object HistoryParser {
 
     fun rawSignal(s: JsonObject) {
       val pos = s.obj("position")
-      latLng(pos?.get("LatLng") ?: pos?.get("latLng"))?.let { raw += it }
+      latLng(pos?.get("LatLng") ?: pos?.get("latLng"))?.let { raw += it to timeOf(pos?.str("timestamp")) }
     }
 
     /** Records.json: 점마다 붙은 활동 추정이 차량이면 그 점에서 경로를 끊는다 */
@@ -418,7 +419,13 @@ object HistoryParser {
         is Activity -> if (item.vehicle) skipped++ else sink.track(listOf(item.start, item.end))
         is Visit -> sink.track(listOf(item.at))
       }
-      if (raw.isNotEmpty()) sink.track(raw)
+      // 원시 위치도 차량 구간 시간에 든 것은 빼고 그 자리에서 끊는다
+      if (raw.isNotEmpty()) {
+        for ((point, t) in raw) {
+          if (inVehicle(t)) sink.endTrack() else sink.point(point)
+        }
+        sink.endTrack()
+      }
       return skipped
     }
   }

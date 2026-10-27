@@ -170,6 +170,22 @@ class HistoryParserTest {
     assertEquals(1, r.vehicleSkipped)
   }
 
+  @Test fun rawSignalsInsideVehicleWindowAreDropped() {
+    val r = HistoryParser.parse(
+      """{"semanticSegments":[
+        {"startTime":"2026-10-01T09:00:00.000+09:00","endTime":"2026-10-01T09:20:00.000+09:00",
+         "activity":{"start":{"latLng":"37.50°, 127.00°"},"end":{"latLng":"37.60°, 127.10°"},"topCandidate":{"type":"IN_BUS"}}}],
+       "rawSignals":[
+        {"position":{"LatLng":"37.49°, 126.99°","timestamp":"2026-10-01T08:55:00.000+09:00"}},
+        {"position":{"LatLng":"37.55°, 127.05°","timestamp":"2026-10-01T09:10:00.000+09:00"}},
+        {"position":{"LatLng":"37.61°, 127.11°","timestamp":"2026-10-01T09:25:00.000+09:00"}},
+        {"position":{"LatLng":"37.62°, 127.12°"}}]}""",
+    )
+    // 버스 안 원시 위치는 빠지고 그 자리에서 끊긴다(웹 테스트와 같은 기대값). 시각 없는 점은 남긴다
+    assertEquals(listOf(1, 2), sizes(r))
+    assertEquals(1, r.vehicleSkipped)
+  }
+
   @Test fun iosTakeoutAndRecordsDropVehicle() {
     val ios = HistoryParser.parse(
       """[
