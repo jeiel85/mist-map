@@ -1,4 +1,4 @@
-# PR과 main 푸시마다 웹 파서 테스트와 Android 단위 테스트·lint를 돌린다 (이슈 #4)
+# PR과 main 푸시마다 웹 파서 테스트·헤드리스 Chrome 점검과 Android 단위 테스트·lint를 돌린다 (이슈 #4)
 name: CI
 
 on:
@@ -22,6 +22,32 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+
+  # tools/의 헤드리스 Chrome 점검: 가져오기 흐름, 앱 모드 브리지, WebGL 컨텍스트 복구.
+  # 러너에 깔린 Chrome을 SwiftShader로 돌린다. 지도 타일은 OpenFreeMap에서 받는다
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save playwright@1.55.0
+      - name: 정적 서버
+        run: |
+          python3 -m http.server 5174 > /tmp/http.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:5174/ > /dev/null && exit 0; sleep 1; done
+          cat /tmp/http.log; exit 1
+      - run: mkdir -p shots
+      - run: node tools/e2e-import.cjs http://localhost:5174/ shots
+      - run: node tools/app-mode.cjs http://localhost:5174/ shots/app-mode.png
+      - run: node tools/context-loss.cjs http://localhost:5174/
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-shots
+          path: shots/
+          if-no-files-found: ignore
 
   android:
     runs-on: ubuntu-latest

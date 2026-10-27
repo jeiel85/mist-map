@@ -65,7 +65,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - WebView 디버깅: 디버그 빌드는 원격 디버깅이 켜져 있다. `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` 후 CDP로 평가한다. 웹 콘솔은 logcat `MistMap` 태그로도 나온다.
 - 릴리스 서명: 업로드 키는 `android/.keystore/`(git 제외)에 있고(로컬 원본: 메인 체크아웃 `D:\Project\mist-map\android\.keystore\`), 백업은 `G:\내 드라이브\모바일 앱 개발\Mist Map\릴리즈 키스토어`. 비밀번호는 `release-signing.properties`에만 있다.
 
-- CI(`.github/workflows/ci.yml`): PR·main 푸시마다 `npm test`와 Android 단위 테스트·lint·디버그 빌드. 헤드리스 Chrome 점검(`tools/`)은 아직 로컬에서만.
+- CI(`.github/workflows/ci.yml`): PR·main 푸시마다 `npm test`, 헤드리스 Chrome 점검(`tools/`의 가져오기·앱 모드·컨텍스트 복구, 스크린샷은 `browser-shots` 아티팩트), Android 단위 테스트·lint·디버그 빌드.
 
 ## 관례
 
