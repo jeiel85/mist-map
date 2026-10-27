@@ -1,6 +1,7 @@
 package com.jeiel85.mistmap.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +58,8 @@ fun RecordsSheet(
   diagnostics: DayDiagnostics,
   batteryRestricted: Boolean,
   onOpenBatterySettings: () -> Unit,
+  simpleAfterSec: Int,
+  onSimpleAfterChange: (Int) -> Unit,
 ) {
   var confirm by remember { mutableStateOf<ImportSummary?>(null) }
   ModalBottomSheet(
@@ -90,6 +93,9 @@ fun RecordsSheet(
       DiagnosticsCard(diagnostics, batteryRestricted, onOpenBatterySettings)
 
       Spacer(Modifier.height(18.dp))
+      SimpleModeSetting(simpleAfterSec, onSimpleAfterChange)
+
+      Spacer(Modifier.height(18.dp))
       Text("가져온 기록", style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.Moon))
       if (imports.isEmpty()) {
         Text(
@@ -104,7 +110,7 @@ fun RecordsSheet(
         }
       }
       Text(
-        "파일은 이 휴대폰 안에서만 읽고 어디에도 올리지 않아요. 내보내기에는 최근 30일 동안 걸은 길이 담겨요.",
+        "파일은 이 휴대폰 안에서만 읽고 어디에도 올리지 않아요. 내보내기에는 최근 30일 동안 걸은 길과 가져온 곳이 담겨요.",
         fontSize = 11.sp,
         color = Mist.MoonSoft,
         modifier = Modifier.padding(top = 14.dp),
@@ -143,6 +149,14 @@ private fun DiagnosticsCard(d: DayDiagnostics, batteryRestricted: Boolean, onOpe
         Stat("쉬는 중", hm(d.sleepMs), Modifier.weight(1f))
         Stat("끊김", "${d.gaps}번", Modifier.weight(1f))
       }
+      if (d.gapTimes.isNotEmpty()) {
+        Text(
+          "위치가 끊긴 때: ${d.gapTimes.joinToString(", ")}",
+          fontSize = 11.sp,
+          color = Mist.MoonSoft,
+          modifier = Modifier.padding(top = 6.dp),
+        )
+      }
       if (batteryRestricted) {
         Text(
           "휴대폰 절전이 기록을 끊을 수 있어요. 앱 정보 › 배터리에서 '제한 없음'(삼성) 또는 '최적화 안 함'으로 바꿔 주세요.",
@@ -154,6 +168,33 @@ private fun DiagnosticsCard(d: DayDiagnostics, batteryRestricted: Boolean, onOpe
           Text("앱 정보 열기", color = Mist.Firefly, fontSize = 13.sp)
         }
       }
+    }
+  }
+}
+
+/** 걷는 중 손대지 않으면 간단히 보기로 들어가는 시간 */
+@Composable
+private fun SimpleModeSetting(current: Int, onChange: (Int) -> Unit) {
+  Text("간단히 보기", style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.Moon))
+  Text(
+    "기록 중에 손대지 않으면 지도를 멈추고 거리만 보여 줘요(배터리 절약).",
+    fontSize = 12.sp,
+    color = Mist.MoonSoft,
+    modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+  )
+  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    for ((sec, label) in listOf(30 to "30초", 60 to "1분", 180 to "3분", 0 to "끄기")) {
+      val selected = sec == current
+      Text(
+        label,
+        fontSize = 13.sp,
+        color = if (selected) Mist.OnFirefly else Mist.Moon,
+        modifier = Modifier
+          .background(if (selected) Mist.Firefly else Mist.Card, RoundedCornerShape(999.dp))
+          .border(1.dp, if (selected) Color.Transparent else Mist.Line, RoundedCornerShape(999.dp))
+          .clickable(role = Role.RadioButton, onClick = { onChange(sec) })
+          .padding(horizontal = 14.dp, vertical = 6.dp),
+      )
     }
   }
 }

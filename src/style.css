@@ -39,7 +39,6 @@ body.ready .hint { transition-delay: 0.5s; }
   border: 1.5px solid var(--line);
   border-radius: 20px;
   box-shadow: var(--shadow), var(--glow);
-  backdrop-filter: blur(6px);
 }
 
 .title-card {
@@ -252,6 +251,16 @@ kbd {
 .sheet em { font-style: normal; color: var(--yellow); }
 .sheet code { font-size: 12px; background: var(--paper); padding: 0 4px; border-radius: 4px; }
 .sheet .fine { margin: 6px 0 0; font-size: 11px; color: var(--ink-soft); }
+#import-history { border-top: 1.5px dashed rgba(255, 243, 220, 0.16); padding: 10px 2px 0; margin-top: 4px; }
+#import-history h3 { margin: 0 0 6px; font-family: var(--font-hand); font-size: 20px; color: var(--yellow); }
+#import-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 160px; overflow: auto; }
+#import-list li { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); }
+#import-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#import-list button {
+  flex: none; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--pink); border: 1.5px solid rgba(242, 158, 142, 0.5); font: inherit;
+}
+#import-list button:hover { background: rgba(242, 158, 142, 0.15); }
 .sheet-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12px; color: var(--ink-soft); }
 .sheet-note svg { width: 16px; height: 16px; flex: none; }
 

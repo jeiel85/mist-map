@@ -109,5 +109,5 @@ cd android
 
 - 지도 데이터 © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
 - 벡터 타일 [OpenFreeMap](https://openfreemap.org) · 스키마 [OpenMapTiles](https://openmaptiles.org)
-- 렌더링 [MapLibre GL JS](https://maplibre.org)
+- 렌더링 [MapLibre GL JS](https://maplibre.org) 4.7.1 (BSD-3, `vendor/`에 동봉)
 - 글꼴 [Gaegu](https://fonts.google.com/specimen/Gaegu), [Gowun Dodum](https://fonts.google.com/specimen/Gowun+Dodum) (앱에 넣은 Gaegu는 SIL OFL 1.1, [android/third_party/Gaegu-OFL.txt](android/third_party/Gaegu-OFL.txt))

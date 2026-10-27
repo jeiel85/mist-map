@@ -1,10 +1,11 @@
 import java.util.Properties
 import javax.inject.Inject
 
-// 웹 렌더러는 저장소 루트의 index.html·src/ 한 벌만 둔다. 빌드할 때 assets/web/으로 복사한다.
+// 웹 렌더러는 저장소 루트의 index.html·src/·vendor/ 한 벌만 둔다. 빌드할 때 assets/web/으로 복사한다.
 abstract class SyncWebAssets : DefaultTask() {
   @get:InputFile abstract val indexHtml: RegularFileProperty
   @get:InputDirectory abstract val webSrc: DirectoryProperty
+  @get:InputDirectory abstract val webVendor: DirectoryProperty
   @get:OutputDirectory abstract val outputDir: DirectoryProperty
   @get:Inject abstract val fs: FileSystemOperations
 
@@ -13,6 +14,7 @@ abstract class SyncWebAssets : DefaultTask() {
     fs.sync {
       from(indexHtml)
       from(webSrc) { into("src") }
+      from(webVendor) { into("vendor") }
       into(outputDir.dir("web"))
     }
   }
@@ -32,8 +34,8 @@ android {
     applicationId = "com.jeiel85.mistmap"
     minSdk = 26
     targetSdk = 36
-    versionCode = 4
-    versionName = "0.6.0"
+    versionCode = 5
+    versionName = "0.7.0"
   }
 
   // 업로드 키는 저장소 밖(.keystore/, git 제외)에 둔다. 백업: G:\내 드라이브\모바일 앱 개발\Mist Map\릴리즈 키스토어
@@ -62,6 +64,7 @@ android {
     targetCompatibility = JavaVersion.VERSION_17
   }
   buildFeatures { compose = true }
+  testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
@@ -69,6 +72,7 @@ ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 val syncWebAssets = tasks.register<SyncWebAssets>("syncWebAssets") {
   indexHtml.set(rootProject.layout.projectDirectory.file("../index.html"))
   webSrc.set(rootProject.layout.projectDirectory.dir("../src"))
+  webVendor.set(rootProject.layout.projectDirectory.dir("../vendor"))
 }
 
 androidComponents {
@@ -94,9 +98,15 @@ dependencies {
   implementation(libs.androidx.fragment)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.serialization.json)
+  // 큰 기록 파일(JSON)을 요소 하나씩 읽는다
+  implementation(libs.gson)
   implementation(libs.kotlinx.coroutines.play.services)
   implementation(libs.play.services.location)
   testImplementation(libs.junit)
+  // Room 쿼리를 JVM에서 실제 SQLite로 시험한다
+  testImplementation(libs.robolectric)
+  testImplementation(libs.androidx.test.core)
+  testImplementation(libs.kotlinx.coroutines.test)
   debugImplementation(libs.androidx.compose.ui.tooling)
   ksp(libs.androidx.room.compiler)
 }

@@ -88,17 +88,19 @@ void main() {
   vec2 w = (px - u_origin) / u_ppm; // 미터 단위 세계 좌표
 
   // 경계까지 거리 (블롭 반지름 단위). 가장자리가 연기처럼 흔들리고 아주 천천히 일렁인다.
+  // 크게 축소하면 흔들림 무늬가 화면 px보다 잘아져 경계가 모래처럼 깨지므로 줌에 따라 줄인다
   float f = texture(u_field, uv).r;
-  float wob = (fbm(w / 70.0 + u_time * 0.015) - 0.5) * 0.32
-            + (noise(w / 9.0 - u_time * 0.08) - 0.5) * 0.07;
+  float wob = (fbm(w / 70.0 + u_time * 0.015) - 0.5) * 0.32 * smoothstep(0.01, 0.04, u_ppm)
+            + (noise(w / 9.0 - u_time * 0.08) - 0.5) * 0.07 * smoothstep(0.05, 0.2, u_ppm);
   float D = sqrt(max(-log(max(f, 1e-6)), 0.0)) - 0.8326 + wob;
   float dPx = D / max(fwidth(D), 1e-5); // 경계까지 화면 px
 
   float fog = smoothstep(-1.0, 1.0, dPx);
 
-  // 밤하늘: 남색 위로 큰 안개 덩어리가 천천히 흘러간다
-  float m = fbm(w / 460.0 + vec2(u_time * 0.006, u_time * 0.002));
-  float swirl = fbm(w / 150.0 - vec2(u_time * 0.012, 0.0));
+  // 밤하늘: 남색 위로 큰 안개 덩어리가 천천히 흘러간다. 크게 축소해도 덩어리가 화면에서 모래알만 해지지 않게 한다
+  vec2 wc = (px - u_origin) / max(u_ppm, 0.12 * u_dpr);
+  float m = fbm(wc / 460.0 + vec2(u_time * 0.006, u_time * 0.002));
+  float swirl = fbm(wc / 150.0 - vec2(u_time * 0.012, 0.0));
   vec3 fogCol = mix(NIGHT, MIST, smoothstep(0.42, 0.78, m) * 0.7 + (swirl - 0.5) * 0.18);
   float vig = smoothstep(1.2, 0.3, length((uv - 0.5) * vec2(u_res.x / u_res.y, 1.0)));
   fogCol *= mix(0.78, 1.0, vig);

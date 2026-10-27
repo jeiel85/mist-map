@@ -67,6 +67,14 @@ class TrackingNotifications(private val context: Context) {
 
   companion object {
     const val ID = 1
+
+    /**
+     * 알림에 보이는 거리 단위(0.1km). 기록 서비스는 이 값이 바뀔 때만 알림을 다시 게시하므로,
+     * 표시 형식을 바꾸면 여기만 고치면 된다
+     */
+    fun distanceStep(m: Double): Long = (m / 100).toLong()
+
+    fun stepToMeters(step: Long): Double = step * 100.0
     private const val CHANNEL = "tracking"
   }
 }

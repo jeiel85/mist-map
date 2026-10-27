@@ -1,54 +1,151 @@
 package com.jeiel85.mistmap.importers
 
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
 import com.jeiel85.mistmap.reveal.LatLng
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
+import java.io.BufferedInputStream
+import java.io.IOException
+import java.io.InputStream
+import java.io.InputStreamReader
+import java.time.Instant
+import java.time.OffsetDateTime
 
 class ImportException(message: String) : Exception(message)
 
 /** 한 track 안의 점은 시간 순으로 이어진 경로이고, 점이 하나뿐인 track은 머문 장소(방문지)다. */
-data class ParsedHistory(val format: String, val tracks: List<List<LatLng>>)
+data class ParsedHistory(val format: String, val tracks: List<List<LatLng>>, val vehicleSkipped: Int = 0)
+
+/** 읽은 경로를 점 하나씩 받는다. 가져오기는 받는 대로 칸으로 바꾸므로 큰 파일도 경로 전체를 메모리에 두지 않는다. */
+interface TrackSink {
+  fun point(p: LatLng)
+
+  /** 지금 경로가 끝났다. 다음 점은 앞 점과 잇지 않는다 */
+  fun endTrack()
+}
+
+data class ParseSummary(val format: String, val points: Int, val vehicleSkipped: Int)
 
 /**
- * 외부 이동 기록 파일 → 경로 목록. 웹의 `src/importers.js`를 그대로 옮겼다.
+ * 외부 이동 기록 파일 → 경로. 웹의 `src/importers.js`를 그대로 옮겼다.
  * 두 쪽 결과가 같아야 하므로 한쪽을 고치면 다른 쪽과 테스트(`tests/importers.test.js`, `HistoryParserTest`)도 함께 고친다.
+ *
+ * JSON은 통째로 올리지 않고 요소 하나씩 읽는다(몇 년 치 Records.json 수백 MB). XML(GPX·KML)은 정규식이라 문자열로 읽는다.
+ * 구글 타임라인의 차량·대중교통·비행 구간은 빼고(걸은 곳만 밝힌다) 그 수를 [ParseSummary.vehicleSkipped]로 알린다.
  */
 object HistoryParser {
-  private val json = Json { isLenient = false }
-
+  /** 문자열 하나를 읽어 경로 목록으로 (테스트·작은 파일용). 큰 파일은 [stream]. */
   fun parse(text: String): ParsedHistory {
-    val src = text.removePrefix("\uFEFF").trimStart()
-    if (src.startsWith("<")) {
-      if (Regex("<gpx[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(src)) return finish("GPX", parseGpx(src))
-      if (Regex("<kml[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(src)) return finish("KML", parseKml(src))
-      throw ImportException("지원하지 않는 XML 파일이에요. GPX나 KML만 읽을 수 있어요")
+    val tracks = mutableListOf<List<LatLng>>()
+    var current = mutableListOf<LatLng>()
+    val sink = object : TrackSink {
+      override fun point(p: LatLng) {
+        current += p
+      }
+
+      override fun endTrack() {
+        if (current.isNotEmpty()) tracks += current
+        current = mutableListOf()
+      }
     }
-    val data = try {
-      json.parseToJsonElement(src)
-    } catch (e: Exception) {
-      throw ImportException("파일을 읽을 수 없어요. GPX·KML·GeoJSON·구글 타임라인 JSON인지 확인해 주세요")
-    }
-    if (isGeoJson(data)) return finish("GeoJSON", parseGeoJson(data))
-    parseGoogleTimeline(data)?.let { return finish("구글 타임라인", it) }
-    throw ImportException("알 수 없는 JSON 형식이에요. GeoJSON이나 구글 타임라인 내보내기 파일만 읽을 수 있어요")
+    val summary = stream(text.byteInputStream(Charsets.UTF_8), sink)
+    return ParsedHistory(summary.format, tracks, summary.vehicleSkipped)
   }
 
-  private fun finish(format: String, tracks: List<List<LatLng?>>): ParsedHistory {
-    val clean = tracks.map { t -> t.filterNotNull().filter(::valid) }.filter { it.isNotEmpty() }
-    if (clean.isEmpty()) throw ImportException("$format 파일에 위치 기록이 없어요")
-    return ParsedHistory(format, clean)
+  /**
+   * @param checkCancelled 요소마다 부른다. 취소되었으면 예외를 던지면 된다
+   * @param maxXmlChars XML은 문자열로 읽으므로 이보다 크면 막는다
+   */
+  fun stream(
+    input: InputStream,
+    sink: TrackSink,
+    checkCancelled: () -> Unit = {},
+    maxXmlChars: Long = Long.MAX_VALUE,
+  ): ParseSummary {
+    val buffered = BufferedInputStream(input, 64 * 1024)
+    skipBom(buffered)
+    val counting = CountingSink(sink)
+    val first = peekNonSpace(buffered)
+    val (format, skipped) = when (first) {
+      '<'.code -> parseXml(readText(buffered, maxXmlChars), counting)
+      '{'.code, '['.code -> parseJson(buffered, counting, checkCancelled)
+      else -> throw ImportException("파일을 읽을 수 없어요. GPX·KML·GeoJSON·구글 타임라인 JSON인지 확인해 주세요")
+    }
+    if (counting.count == 0) throw ImportException("$format 파일에 위치 기록이 없어요")
+    return ParseSummary(format, counting.count, skipped)
+  }
+
+  /** 잘못된 좌표는 버리고(경로는 끊지 않음, 웹과 같음) 몇 개를 넘겼는지 센다 */
+  private class CountingSink(private val sink: TrackSink) : TrackSink {
+    var count = 0
+    override fun point(p: LatLng) {
+      if (!valid(p)) return
+      count++
+      sink.point(p)
+    }
+
+    override fun endTrack() = sink.endTrack()
+
+    fun track(points: List<LatLng?>) {
+      points.forEach { it?.let(::point) }
+      endTrack()
+    }
   }
 
   private fun valid(p: LatLng) =
     p.lat.isFinite() && p.lng.isFinite() && kotlin.math.abs(p.lat) <= 90 && kotlin.math.abs(p.lng) <= 180 &&
       !(p.lat == 0.0 && p.lng == 0.0)
 
-  // ---- GPX ----
+  private fun skipBom(input: BufferedInputStream) {
+    input.mark(3)
+    val bom = ByteArray(3)
+    val n = input.read(bom)
+    val isBom = n == 3 && bom[0] == 0xEF.toByte() && bom[1] == 0xBB.toByte() && bom[2] == 0xBF.toByte()
+    if (!isBom) input.reset()
+  }
+
+  private fun peekNonSpace(input: BufferedInputStream): Int {
+    input.mark(64 * 1024)
+    var c: Int
+    do {
+      c = input.read()
+    } while (c == ' '.code || c == '\n'.code || c == '\r'.code || c == '\t'.code)
+    input.reset()
+    return c
+  }
+
+  private fun readText(input: InputStream, maxChars: Long): String {
+    val text = StringBuilder()
+    val buf = CharArray(64 * 1024)
+    InputStreamReader(input, Charsets.UTF_8).use { reader ->
+      while (true) {
+        val n = reader.read(buf)
+        if (n < 0) break
+        text.append(buf, 0, n)
+        if (text.length > maxChars) throw ImportException("파일이 너무 커요. 기간을 나눠 내보낸 파일을 넣어 주세요")
+      }
+    }
+    return text.toString()
+  }
+
+  // ---- XML ----
+  private fun parseXml(src: String, sink: CountingSink): Pair<String, Int> {
+    if (Regex("<gpx[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(src)) {
+      parseGpx(src).forEach(sink::track)
+      return "GPX" to 0
+    }
+    if (Regex("<kml[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(src)) {
+      parseKml(src).forEach(sink::track)
+      return "KML" to 0
+    }
+    throw ImportException("지원하지 않는 XML 파일이에요. GPX나 KML만 읽을 수 있어요")
+  }
+
   private val gpxTag = Regex(
     "<(trkseg|rte)\\b[^>]*>|</(trkseg|rte)\\s*>|<(trkpt|rtept|wpt)\\b([^>]*)>",
     RegexOption.IGNORE_CASE,
@@ -76,7 +173,6 @@ object HistoryParser {
     Regex("\\b$name\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE).find(attrs)
       ?.groupValues?.get(1)?.toDoubleOrNull() ?: Double.NaN
 
-  // ---- KML ----
   private val kmlCoordinates = Regex("<coordinates[^>]*>([\\s\\S]*?)</coordinates>", RegexOption.IGNORE_CASE)
   private val kmlTrack = Regex("<gx:Track\\b[^>]*>([\\s\\S]*?)</gx:Track>", RegexOption.IGNORE_CASE)
   private val kmlCoord = Regex("<gx:coord>([^<]+)</gx:coord>", RegexOption.IGNORE_CASE)
@@ -97,6 +193,94 @@ object HistoryParser {
       }.toList()
     }
     return tracks
+  }
+
+  // ---- JSON (요소 하나씩) ----
+  private fun parseJson(input: InputStream, sink: CountingSink, checkCancelled: () -> Unit): Pair<String, Int> {
+    val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8))
+    try {
+      val timeline = TimelineCollector(sink, checkCancelled)
+      if (reader.peek() == JsonToken.BEGIN_ARRAY) {
+        // iOS 타임라인 내보내기: 최상위가 구간 배열
+        reader.beginArray()
+        while (reader.hasNext()) {
+          checkCancelled()
+          (readElement(reader) as? JsonObject)?.let(timeline::segment)
+        }
+        reader.endArray()
+        if (!timeline.sawSegment) throw unknownJson()
+        return "구글 타임라인" to timeline.finish()
+      }
+      // 최상위 객체: 구글 타임라인의 큰 배열은 요소마다 처리하고, 나머지 키(GeoJSON 등)는 그대로 모은다
+      val rest = linkedMapOf<String, JsonElement>()
+      var google = false
+      reader.beginObject()
+      while (reader.hasNext()) {
+        val key = reader.nextName()
+        val handler: ((JsonObject) -> Unit)? = when (key) {
+          "semanticSegments" -> timeline::segment
+          "rawSignals" -> timeline::rawSignal
+          "locations" -> timeline::location
+          "timelineObjects" -> timeline::timelineObject
+          else -> null
+        }
+        if (handler != null && reader.peek() == JsonToken.BEGIN_ARRAY) {
+          google = true
+          reader.beginArray()
+          while (reader.hasNext()) {
+            checkCancelled()
+            (readElement(reader) as? JsonObject)?.let(handler)
+          }
+          reader.endArray()
+          if (key == "locations") timeline.endLocations()
+        } else {
+          rest[key] = readElement(reader)
+        }
+      }
+      reader.endObject()
+      val obj = JsonObject(rest)
+      if (isGeoJson(obj)) {
+        parseGeoJson(obj).forEach(sink::track)
+        return "GeoJSON" to 0
+      }
+      if (google) return "구글 타임라인" to timeline.finish()
+      throw unknownJson()
+    } catch (e: IOException) {
+      throw ImportException("파일을 읽을 수 없어요. GPX·KML·GeoJSON·구글 타임라인 JSON인지 확인해 주세요")
+    } catch (e: IllegalStateException) {
+      // 취소(CancellationException)도 IllegalStateException이라 형식 오류로 바꾸지 않고 그대로 올린다
+      if (e is java.util.concurrent.CancellationException) throw e
+      throw ImportException("파일을 읽을 수 없어요. GPX·KML·GeoJSON·구글 타임라인 JSON인지 확인해 주세요")
+    }
+  }
+
+  private fun unknownJson() =
+    ImportException("알 수 없는 JSON 형식이에요. GeoJSON이나 구글 타임라인 내보내기 파일만 읽을 수 있어요")
+
+  /** 지금 위치의 값 하나를 트리로 읽는다 (요소 하나 크기라 작다) */
+  private fun readElement(reader: JsonReader): JsonElement = when (reader.peek()) {
+    JsonToken.BEGIN_ARRAY -> {
+      val items = mutableListOf<JsonElement>()
+      reader.beginArray()
+      while (reader.hasNext()) items += readElement(reader)
+      reader.endArray()
+      JsonArray(items)
+    }
+    JsonToken.BEGIN_OBJECT -> {
+      val fields = linkedMapOf<String, JsonElement>()
+      reader.beginObject()
+      while (reader.hasNext()) fields[reader.nextName()] = readElement(reader)
+      reader.endObject()
+      JsonObject(fields)
+    }
+    JsonToken.STRING -> JsonPrimitive(reader.nextString())
+    JsonToken.NUMBER -> JsonPrimitive(reader.nextString().toDoubleOrNull() ?: Double.NaN)
+    JsonToken.BOOLEAN -> JsonPrimitive(reader.nextBoolean())
+    JsonToken.NULL -> {
+      reader.nextNull()
+      JsonNull
+    }
+    else -> throw IllegalStateException("예상하지 못한 JSON 토큰 ${reader.peek()}")
   }
 
   // ---- GeoJSON ----
@@ -140,53 +324,156 @@ object HistoryParser {
   //  2. 같은 기능의 iOS 내보내기: 최상위 배열, 좌표가 "geo:lat,lng" 문자열
   //  3. 예전 테이크아웃 Records.json: { locations: [{ latitudeE7, longitudeE7 }] }
   //  4. 예전 테이크아웃 월별 Semantic Location History: { timelineObjects }
-  private fun parseGoogleTimeline(d: JsonElement): List<List<LatLng?>>? {
-    if (d is JsonArray) return if (d.any(::isSegmentLike)) segmentsToTracks(d) else null
-    val o = d as? JsonObject ?: return null
 
-    if (o["semanticSegments"] is JsonArray || o["rawSignals"] is JsonArray) {
-      val tracks = segmentsToTracks(o["semanticSegments"] as? JsonArray ?: JsonArray(emptyList()))
-      val raw = (o["rawSignals"] as? JsonArray ?: JsonArray(emptyList())).mapNotNull { s ->
-        val pos = s.obj("position")
-        latLng(pos?.get("LatLng") ?: pos?.get("latLng"))
+  /**
+   * 1·2는 차량 활동의 시간대를 알아야 경로 점을 거를 수 있어 구간을 모았다가 [finish]에서 내보낸다(웹과 같은 순서).
+   * 3·4는 받는 대로 내보낸다.
+   */
+  private class TimelineCollector(private val sink: CountingSink, private val checkCancelled: () -> Unit) {
+    private sealed interface Item
+    private class Path(val points: List<Pair<LatLng?, Long?>>) : Item
+    private class Activity(val start: LatLng?, val end: LatLng?, val vehicle: Boolean) : Item
+    private class Visit(val at: LatLng) : Item
+
+    private val items = mutableListOf<Item>()
+    private val vehicleWindows = mutableListOf<LongRange>()
+    // 원시 위치는 차량 구간 시간을 다 안 뒤에 거르므로 시각과 함께 모아 둔다
+    private val raw = mutableListOf<Pair<LatLng, Long?>>()
+    private var skipped = 0
+    var sawSegment = false
+      private set
+
+    fun segment(s: JsonObject) {
+      if ("timelinePath" in s || "visit" in s || "activity" in s) sawSegment = true
+      val path = s["timelinePath"] as? JsonArray
+      val activity = s.obj("activity")
+      if (activity != null && isVehicle(activity.obj("topCandidate")?.str("type"))) {
+        val from = timeOf(s.str("startTime"))
+        val to = timeOf(s.str("endTime"))
+        if (from != null && to != null) vehicleWindows += from..to
       }
-      if (raw.isNotEmpty()) tracks += raw
-      return tracks
+      if (path != null && path.isNotEmpty()) {
+        val start = timeOf(s.str("startTime"))
+        items += Path(
+          path.map { p ->
+            val o = p as? JsonObject
+            // Android는 점마다 time, iOS는 구간 시작에서 몇 분 뒤인지
+            val t = o?.str("time")?.let(::timeOf)
+              ?: o?.get("durationMinutesOffsetFromStartTime")?.let { offset ->
+                val minutes = (offset as? JsonPrimitive)?.content?.toDoubleOrNull()
+                if (start != null && minutes != null) start + (minutes * 60_000).toLong() else null
+              }
+            latLng(o?.get("point")) to t
+          },
+        )
+      } else if (activity != null) {
+        items += Activity(latLng(activity["start"]), latLng(activity["end"]), isVehicle(activity.obj("topCandidate")?.str("type")))
+      }
+      latLng(s.obj("visit")?.obj("topCandidate")?.get("placeLocation"))?.let { items += Visit(it) }
     }
-    (o["locations"] as? JsonArray)?.let { locations -> return listOf(locations.mapNotNull(::latLng)) }
-    (o["timelineObjects"] as? JsonArray)?.let { objects ->
-      val tracks = mutableListOf<List<LatLng?>>()
-      for (obj in objects) {
-        obj.obj("activitySegment")?.let { a ->
+
+    fun rawSignal(s: JsonObject) {
+      val pos = s.obj("position")
+      latLng(pos?.get("LatLng") ?: pos?.get("latLng"))?.let { raw += it to timeOf(pos?.str("timestamp")) }
+    }
+
+    /** Records.json: 점마다 붙은 활동 추정이 차량이면 그 점에서 경로를 끊는다 */
+    fun location(o: JsonObject) {
+      // activity[0].activity[0].type (웹과 같은 경로)
+      val guesses = ((o["activity"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("activity") as? JsonArray
+      val type = (guesses?.firstOrNull() as? JsonObject)?.str("type")
+      if (isVehicle(type)) {
+        skipped++
+        sink.endTrack()
+        return
+      }
+      latLng(o)?.let(sink::point)
+    }
+
+    fun endLocations() = sink.endTrack()
+
+    fun timelineObject(o: JsonObject) {
+      o.obj("activitySegment")?.let { a ->
+        if (isVehicle(a.str("activityType"))) {
+          skipped++
+        } else {
           val path = (a.obj("simplifiedRawPath")?.get("points") as? JsonArray)
             ?: (a.obj("waypointPath")?.get("waypoints") as? JsonArray)
             ?: JsonArray(emptyList())
-          tracks += (listOf(a["startLocation"]) + path + listOf(a["endLocation"])).mapNotNull(::latLng)
+          sink.track((listOf(a["startLocation"]) + path + listOf(a["endLocation"])).mapNotNull(::latLng))
         }
-        latLng(obj.obj("placeVisit")?.get("location"))?.let { tracks += listOf(it) }
       }
-      return tracks
+      latLng(o.obj("placeVisit")?.get("location"))?.let { sink.track(listOf(it)) }
     }
-    return null
+
+    /** @return 뺀 차량 구간 수 */
+    fun finish(): Int {
+      val inVehicle = windowLookup(vehicleWindows)
+      for (item in items) when (item) {
+        is Path -> {
+          checkCancelled()
+          for ((point, t) in item.points) {
+            if (inVehicle(t)) sink.endTrack() else point?.let(sink::point)
+          }
+          sink.endTrack()
+        }
+        is Activity -> if (item.vehicle) skipped++ else sink.track(listOf(item.start, item.end))
+        is Visit -> sink.track(listOf(item.at))
+      }
+      // 원시 위치도 차량 구간 시간에 든 것은 빼고 그 자리에서 끊는다
+      if (raw.isNotEmpty()) {
+        for ((i, entry) in raw.withIndex()) {
+          if (i % 1024 == 0) checkCancelled()
+          val (point, t) = entry
+          if (inVehicle(t)) sink.endTrack() else sink.point(point)
+        }
+        sink.endTrack()
+      }
+      return skipped
+    }
   }
 
-  private fun isSegmentLike(s: JsonElement) =
-    s is JsonObject && ("timelinePath" in s || "visit" in s || "activity" in s)
-
-  private fun segmentsToTracks(segments: JsonArray): MutableList<List<LatLng?>> {
-    val tracks = mutableListOf<List<LatLng?>>()
-    for (s in segments) {
-      val o = s as? JsonObject ?: continue
-      val path = o["timelinePath"] as? JsonArray
-      val activity = o.obj("activity")
-      if (path != null && path.isNotEmpty()) {
-        tracks += path.map { latLng((it as? JsonObject)?.get("point")) }
-      } else if (activity != null) {
-        tracks += listOfNotNull(latLng(activity["start"]), latLng(activity["end"]))
-      }
-      latLng(o.obj("visit")?.obj("topCandidate")?.get("placeLocation"))?.let { tracks += listOf(it) }
+  /** 시간 구간들을 정렬·병합해 두고, 시각이 그중 하나에 드는지 이분 탐색으로 답한다(웹 `windowLookup`과 같음) */
+  private fun windowLookup(windows: List<LongRange>): (Long?) -> Boolean {
+    val merged = mutableListOf<LongArray>()
+    for (w in windows.sortedBy { it.first }) {
+      val last = merged.lastOrNull()
+      if (last != null && w.first <= last[1]) last[1] = maxOf(last[1], w.last) else merged += longArrayOf(w.first, w.last)
     }
-    return tracks
+    return lookup@{ t ->
+      if (t == null) return@lookup false
+      var lo = 0
+      var hi = merged.size - 1
+      while (lo <= hi) {
+        val mid = (lo + hi) ushr 1
+        when {
+          t < merged[mid][0] -> hi = mid - 1
+          t > merged[mid][1] -> lo = mid + 1
+          else -> return@lookup true
+        }
+      }
+      false
+    }
+  }
+
+  /** 차량·대중교통·비행 (구글이 쓰는 이름: IN_PASSENGER_VEHICLE, IN_BUS, IN_SUBWAY, FLYING …, iOS는 "in passenger vehicle") */
+  internal fun isVehicle(type: String?): Boolean {
+    if (type == null) return false
+    val t = type.trim().uppercase().replace(Regex("\\s+"), "_")
+    return t.startsWith("IN_") || t in setOf("FLYING", "MOTORCYCLING", "BOATING", "SAILING")
+  }
+
+  private fun timeOf(iso: String?): Long? {
+    if (iso == null) return null
+    return try {
+      OffsetDateTime.parse(iso).toInstant().toEpochMilli()
+    } catch (e: Exception) {
+      try {
+        Instant.parse(iso).toEpochMilli()
+      } catch (e2: Exception) {
+        null
+      }
+    }
   }
 
   private val latLngText = Regex("(-?\\d+(?:\\.\\d+)?)\\s*°?\\s*,\\s*(-?\\d+(?:\\.\\d+)?)")

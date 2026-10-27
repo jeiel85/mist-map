@@ -10,7 +10,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Gowun+Dodum&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <!-- MapLibre는 저장소에 함께 둔다: 오프라인 앱에서도 안개를 그리고, 외부 CDN 변조 위험이 없다 -->
+  <link rel="stylesheet" href="vendor/maplibre-gl-4.7.1/maplibre-gl.css" />
   <link rel="stylesheet" href="src/style.css" />
 </head>
 <body>
@@ -90,6 +91,11 @@
         </ul>
       </details>
 
+      <section id="import-history" hidden>
+        <h3>가져온 기록</h3>
+        <ul id="import-list"></ul>
+      </section>
+
       <p class="sheet-note">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
         파일은 이 브라우저 안에서만 읽고, 어디에도 올리지 않아요.
@@ -101,7 +107,7 @@
   <div id="toast" role="status"></div>
   <div id="fatal" hidden></div>
 
-  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="vendor/maplibre-gl-4.7.1/maplibre-gl.js"></script>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

@@ -18,6 +18,10 @@ import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import android.view.WindowManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import java.time.LocalDate
 import androidx.core.location.LocationManagerCompat
 import com.jeiel85.mistmap.tracking.TrackingService
@@ -87,10 +91,33 @@ class MainActivity : ComponentActivity() {
     vm.importFrom(uri)
   }
 
-  /** 간단히 보기 동안 화면 밝기를 낮춘다. 나오면 시스템 밝기로 돌려놓는다. */
+  private var dimWanted = false
+  private val lightListener = object : SensorEventListener {
+    override fun onSensorChanged(event: SensorEvent) = applyBrightness(event.values[0])
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+  }
+
+  /**
+   * 간단히 보기 동안 화면 밝기를 낮춘다. 나오면 시스템 밝기로 돌려놓는다.
+   * 낮 야외처럼 밝은 곳에서 어둡게 하면 거리 글자가 안 보이므로, 조도 센서가 밝다고 하면 낮추지 않는다.
+   */
   private fun setDimmed(dim: Boolean) {
+    dimWanted = dim
+    val sensors = getSystemService(SensorManager::class.java)
+    val light = sensors?.getDefaultSensor(Sensor.TYPE_LIGHT)
+    if (dim && light != null) {
+      sensors.registerListener(lightListener, light, SensorManager.SENSOR_DELAY_NORMAL)
+    } else {
+      sensors?.unregisterListener(lightListener)
+    }
+    applyBrightness(null)
+  }
+
+  private fun applyBrightness(lux: Float?) {
+    val bright = lux != null && lux >= DAYLIGHT_LUX
     window.attributes = window.attributes.apply {
-      screenBrightness = if (dim) DIM_BRIGHTNESS else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+      screenBrightness = if (dimWanted && !bright) DIM_BRIGHTNESS else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
     }
   }
 
@@ -127,7 +154,16 @@ class MainActivity : ComponentActivity() {
       })
       return
     }
-    if (!TrackingService.start(this)) vm.show(Notice("위치 권한이 있어야 걸은 길을 기록할 수 있어요."))
+    if (!TrackingService.start(this)) {
+      vm.show(Notice("위치 권한이 있어야 걸은 길을 기록할 수 있어요."))
+      return
+    }
+    // 알림을 거부했으면 기록은 되지만 "기록 중" 표시와 일시정지·끄기 버튼이 알림에 안 보인다
+    if (Build.VERSION.SDK_INT >= 33 &&
+      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
+      vm.show(Notice("알림을 허용하지 않아 기록 중 표시가 보이지 않아요. 기록은 그대로 돼요.", "설정 열기", ::openAppSettings))
+    }
   }
 
   private fun openAppSettings() {
@@ -136,3 +172,6 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val DIM_BRIGHTNESS = 0.08f
+
+/** 이보다 밝으면(낮 야외) 간단히 보기에서도 밝기를 낮추지 않는다 */
+private const val DAYLIGHT_LUX = 1000f

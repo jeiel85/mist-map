@@ -1,6 +1,7 @@
 import { createMapStyle } from './mapStyle.js';
 import { createFogLayer } from './fog.js';
-import { parseHistory, ImportError } from './importers.js';
+import { ImportError } from './importers.js';
+import { planImport } from './importPlan.js';
 
 const maplibregl = window.maplibregl;
 
@@ -12,10 +13,15 @@ const WALK_SPEED = 28;           // m/s (게임 속도)
 const RUN_SPEED = 75;
 const STROLL_SPEED = 22;
 const START = { lng: 127.0560, lat: 37.5446 }; // 성수동
-const STORAGE_KEY = 'mistmap:v1';
+const STORAGE_KEY_V1 = 'mistmap:v1';
+const STORAGE_KEY = 'mistmap:v2'; // 지점마다 출처(걸음 0, 가져온 파일 n)를 함께 담는 압축 형식
 const DEDUP_M = 18;              // 이 격자 칸에 이미 지점이 있으면 새로 찍지 않는다(적도 기준 m)
-const IMPORT_GAP_M = 1500;       // 가져온 기록에서 이보다 멀리 떨어진 두 점은 잇지 않는다(기록 공백·장거리 이동)
 const IMPORT_MAX_POINTS = 100000; // 한 번에 가져올 새 지점 상한 (localStorage 용량 보호)
+const GEO_MAX_ACCURACY_M = 35;   // 이보다 부정확한 위치는 따라가지 않는다 (앱의 LocationFilter와 같음)
+const MIN_BLOB_PX = 3;           // 크게 축소해도 밝힌 곳이 점으로라도 보이게
+const MERGE_BLOB_PX = 10;        // 블롭이 이보다 작게 그려지면 가까운 것끼리 하나로 묶어 개수를 줄인다
+const DEEP_IDLE_AFTER_S = 20;    // 이만큼 아무 일이 없으면 더 드물게 그린다
+const DEEP_IDLE_FPS = 4;
 const EARTH_C = 40075016.686;
 const CELL_LEVEL = 21;           // 앱이 넘기는 칸: 웹 메르카토르 쿼드트리 21단계 (DECISIONS D2)
 const IDLE_FPS = 15;             // 움직임·걷힘 연출이 없을 때 안개를 다시 그리는 빈도
@@ -44,7 +50,8 @@ function offset(p, eastM, northM) {
 // ---- 상태 ----
 const state = {
   origin: { ...START },
-  points: [],         // { lng, lat, mx, my, born }
+  points: [],         // { lng, lat, mx, my, born, src } src: 0=걸음, n=가져온 파일 id
+  imports: [],        // { id, label, at } 가져온 파일 (되돌리기용)
   cells: new Set(),
   walkedM: 0,
   player: { ...START },
@@ -59,28 +66,70 @@ const keys = new Set();
 const now = () => performance.now() / 1000;
 
 // ---- 저장 ----
+// v2: { v: 2, origin, player, walkedM, imports, pts: [lng×1e5, lat×1e5, src, …] } — v1보다 약 40% 작다
+// v1: { origin, player, walkedM, points: [[lng, lat], …] } — 읽기만 하고 다음 저장 때 v2로 옮긴다
 function loadSave() {
   if (APP) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(STORAGE_KEY_V1);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    const points = [];
+    if (data.v === 2) {
+      for (let i = 0; i + 2 < data.pts.length; i += 3) points.push({ lng: data.pts[i] / 1e5, lat: data.pts[i + 1] / 1e5, src: data.pts[i + 2] });
+    } else {
+      for (const [lng, lat] of data.points ?? []) points.push({ lng, lat, src: 0 });
+    }
+    return { ...data, points, imports: data.imports ?? [] };
   } catch (e) {
     console.warn('저장 데이터를 읽지 못했습니다', e);
     return null;
   }
 }
 let saveTimer = 0;
+let storageWarned = false;
+const STORAGE_WARN_CHARS = 4_000_000;
+/**
+ * v2를 쓰고 예전 v1을 지운다. v1이 저장소 절반 넘게 차지하면 둘이 함께 들어가지 못하므로,
+ * 자리가 모자라면 v1을 먼저 치우고 다시 쓴다. 그래도 실패하면 v1을 되돌려 놓아 기록을 잃지 않는다.
+ */
+function writeSave(json) {
+  try {
+    localStorage.setItem(STORAGE_KEY, json);
+  } catch (e) {
+    const old = localStorage.getItem(STORAGE_KEY_V1);
+    if (old === null) throw e;
+    localStorage.removeItem(STORAGE_KEY_V1);
+    try {
+      localStorage.setItem(STORAGE_KEY, json);
+    } catch (e2) {
+      localStorage.setItem(STORAGE_KEY_V1, old);
+      throw e2;
+    }
+  }
+  localStorage.removeItem(STORAGE_KEY_V1);
+}
+
 function scheduleSave() {
   if (APP) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        origin: state.origin,
-        player: state.player,
-        walkedM: state.walkedM,
-        points: state.points.map((p) => [+p.lng.toFixed(6), +p.lat.toFixed(6)]),
-      }));
+      const pts = new Array(state.points.length * 3);
+      state.points.forEach((p, i) => {
+        pts[i * 3] = Math.round(p.lng * 1e5);
+        pts[i * 3 + 1] = Math.round(p.lat * 1e5);
+        pts[i * 3 + 2] = p.src;
+      });
+      const json = JSON.stringify({
+        v: 2, origin: state.origin, player: state.player, walkedM: state.walkedM, imports: state.imports, pts,
+      });
+      writeSave(json);
+      // 브라우저 저장소는 보통 5MB. 다 차기 전에 한 번 알린다 (앱은 기기 DB라 해당 없음)
+      if (json.length > STORAGE_WARN_CHARS && !storageWarned) {
+        storageWarned = true;
+        toast('브라우저 저장 공간이 거의 찼어요. 오래된 가져온 기록을 되돌리면 공간이 생겨요');
+      }
     } catch (e) {
       console.warn('저장하지 못했습니다', e);
       toast('브라우저 저장소를 쓸 수 없어 기록이 저장되지 않아요');
@@ -102,7 +151,24 @@ function markCells(p) {
   }
 }
 
-const occupied = new Set();
+/** 중복 격자 키 → 그 자리에 처음 놓인 지점. 걸어서 지나간 가져온 지점을 걸음으로 바꿀 때도 쓴다 */
+const occupied = new Map();
+
+// 화면 안 지점만 빨리 찾도록 메르카토르 14단계 타일(서울 약 1.9km)로 묶어 둔다.
+// 칸이 수십만 개여도 한 프레임에 화면 근처 타일만 본다 (이슈 #4)
+const INDEX_LEVEL = 2 ** 14;
+const index = new Map();
+const tileKey = (tx, ty) => tx * INDEX_LEVEL + ty;
+function indexAdd(p) {
+  const key = tileKey(Math.floor(p.mx * INDEX_LEVEL), Math.floor(p.my * INDEX_LEVEL));
+  let list = index.get(key);
+  if (!list) index.set(key, (list = []));
+  list.push(p);
+}
+function rebuildIndex() {
+  index.clear();
+  for (const p of state.points) indexAdd(p);
+}
 const dedupKey = (ll) => {
   const k = EARTH_C / DEDUP_M;
   return `${Math.floor(mercX(ll.lng) * k)},${Math.floor(mercY(ll.lat) * k)}`;
@@ -110,11 +176,12 @@ const dedupKey = (ll) => {
 
 let revealCount = 0;
 let activeUntil = 0; // 이 시각까지는 매 프레임 다시 그린다 (걷힘 스프링·이동)
-function reveal(ll, born = now()) {
-  const p = { lng: ll.lng, lat: ll.lat, mx: mercX(ll.lng), my: mercY(ll.lat), born };
+function reveal(ll, born = now(), src = 0) {
+  const p = { lng: ll.lng, lat: ll.lat, mx: mercX(ll.lng), my: mercY(ll.lat), born, src };
   activeUntil = Math.max(activeUntil, born + 2.5);
   state.points.push(p);
-  occupied.add(dedupKey(p));
+  indexAdd(p);
+  occupied.set(dedupKey(p), p);
   markCells(p);
   if (revealCount++ % 3 === 0 && Math.abs(born - now()) < 0.1) spawnPuffs(ll);
   return p;
@@ -125,78 +192,109 @@ let lastSample = null;
 function maybeReveal() {
   if (lastSample && distM(lastSample, state.player) < SAMPLE_SPACING_M) return;
   lastSample = { ...state.player };
-  if (occupied.has(dedupKey(state.player))) return;
+  const there = occupied.get(dedupKey(state.player));
+  if (there) {
+    // 가져온 곳을 걸어서 지나가면 걸음으로 남긴다: 그 파일을 되돌려도 걸은 곳은 사라지지 않는다
+    if (there.src !== 0) { there.src = 0; scheduleSave(); }
+    return;
+  }
   reveal(state.player);
   scheduleSave();
 }
 
 // ---- 기록 가져오기 ----
+// 파일 읽기·경로 채우기는 워커에서 한다(몇 년 치 타임라인도 화면이 멈추지 않게). 워커를 못 쓰면 이 스레드에서.
+let importWorker = null;
+try {
+  importWorker = new Worker(new URL('./importWorker.js', import.meta.url), { type: 'module' });
+} catch (e) {
+  console.warn('가져오기 워커를 만들지 못해 화면 스레드에서 읽습니다', e);
+}
+let importSeq = 0;
+
+function planInWorker(file, onProgress) {
+  if (!importWorker) {
+    return file.text().then((text) => planImport(text, dedupKey, onProgress));
+  }
+  const id = ++importSeq;
+  return new Promise((resolve, reject) => {
+    const onMessage = ({ data }) => {
+      if (data.id !== id) return;
+      if (data.type === 'progress') { onProgress(data.fraction); return; }
+      importWorker.removeEventListener('message', onMessage);
+      if (data.type === 'done') resolve(data.result);
+      else reject(data.importError ? new ImportError(data.message) : new Error(data.message));
+    };
+    importWorker.addEventListener('message', onMessage);
+    importWorker.postMessage({ id, file, dedupM: DEDUP_M });
+  });
+}
+
 async function importFiles(files) {
-  const formats = new Set();
-  const fresh = [];
-  const pending = new Set();
-  let addedM = 0, truncated = false;
   let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-
-  const collect = (q) => {
-    if (fresh.length >= IMPORT_MAX_POINTS) { truncated = true; return; }
-    const key = dedupKey(q);
-    if (occupied.has(key) || pending.has(key)) return;
-    pending.add(key);
-    fresh.push(q);
-  };
-
-  for (const file of files) {
-    let parsed;
+  const results = [];
+  for (const [n, file] of files.entries()) {
+    const prefix = files.length > 1 ? `${n + 1}/${files.length} ` : '';
     try {
-      parsed = parseHistory(await file.text());
+      toast(`${prefix}${file.name} 읽는 중…`);
+      const plan = await planInWorker(file, (f) => toast(`${prefix}${file.name} 읽는 중… ${Math.round(f * 100)}%`));
+      results.push({ file, plan });
+      [minLng, minLat] = [Math.min(minLng, plan.bounds[0]), Math.min(minLat, plan.bounds[1])];
+      [maxLng, maxLat] = [Math.max(maxLng, plan.bounds[2]), Math.max(maxLat, plan.bounds[3])];
     } catch (e) {
       if (!(e instanceof ImportError)) console.error(e);
       toast(e instanceof ImportError ? `${file.name}: ${e.message}` : `${file.name}을(를) 읽다가 문제가 생겼어요`);
-      continue;
-    }
-    formats.add(parsed.format);
-    for (const track of parsed.tracks) {
-      let prev = null;
-      for (const p of track) {
-        minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng);
-        minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
-        const d = prev ? distM(prev, p) : Infinity;
-        if (d <= IMPORT_GAP_M) {
-          addedM += d;
-          const steps = Math.max(1, Math.ceil(d / SAMPLE_SPACING_M));
-          for (let i = 1; i <= steps; i++) {
-            const t = i / steps;
-            collect({ lng: prev.lng + (p.lng - prev.lng) * t, lat: prev.lat + (p.lat - prev.lat) * t });
-          }
-        } else {
-          collect(p);
-        }
-        prev = p;
-      }
     }
   }
-  if (formats.size === 0) return;
+  if (results.length === 0) return;
 
   setStroll(false);
   state.follow = false;
   map.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 90, maxZoom: 16.2, duration: 1400 });
 
-  // 카메라가 도착할 즈음부터 기록 순서대로 안개가 쓸려 나간다
+  // 카메라가 도착할 즈음부터 기록 순서대로 안개가 쓸려 나간다. 파일 하나가 되돌리기 단위다
   const areaBefore = state.cells.size;
   const t0 = now() + 1.2;
-  fresh.forEach((q, i) => reveal(q, t0 + (2.6 * i) / fresh.length));
-  state.walkedM += addedM;
+  let added = 0, truncated = false;
+  const formats = new Set();
+  for (const { file, plan } of results) {
+    formats.add(plan.format);
+    let fresh = plan.points.filter((q) => !occupied.has(dedupKey(q)));
+    if (fresh.length > IMPORT_MAX_POINTS) { fresh = fresh.slice(0, IMPORT_MAX_POINTS); truncated = true; }
+    if (fresh.length === 0) continue;
+    const id = Math.max(0, ...state.imports.map((i) => i.id)) + 1;
+    state.imports.push({ id, label: `${plan.format} · ${file.name}`, at: Date.now() });
+    fresh.forEach((q, i) => reveal(q, t0 + (2.6 * i) / fresh.length, id));
+    added += fresh.length;
+    state.walkedM += plan.distanceM;
+  }
   scheduleSave();
+  renderImports();
 
   const label = [...formats].join(' · ');
-  if (fresh.length === 0) {
+  if (added === 0) {
     toast(`${label} 기록의 장소는 이미 모두 밝혀져 있어요`);
   } else {
     const km2 = ((state.cells.size - areaBefore) * CELL_M * CELL_M) / 1e6;
-    toast(`${label}에서 ${fresh.length.toLocaleString('ko-KR')}곳을 새로 밝혔어요 · +${km2.toFixed(2)} km²`
-      + (truncated ? ` (너무 커서 ${IMPORT_MAX_POINTS.toLocaleString('ko-KR')}곳까지만)` : ''));
+    toast(`${label}에서 ${added.toLocaleString('ko-KR')}곳을 새로 밝혔어요 · +${km2.toFixed(2)} km²`
+      + (truncated ? ` (너무 커서 파일마다 ${IMPORT_MAX_POINTS.toLocaleString('ko-KR')}곳까지만)` : ''));
   }
+}
+
+/** 가져온 파일 하나를 되돌린다. 그 파일이 새로 밝힌 지점만 사라진다(걸어서 밝힌 곳·먼저 밝힌 곳은 남음). */
+function undoImport(id) {
+  const item = state.imports.find((i) => i.id === id);
+  if (!item) return;
+  state.points = state.points.filter((p) => p.src !== id);
+  state.imports = state.imports.filter((i) => i.id !== id);
+  occupied.clear();
+  state.cells.clear();
+  for (const p of state.points) { occupied.set(dedupKey(p), p); markCells(p); }
+  rebuildIndex();
+  activeUntil = now() + 0.5;
+  scheduleSave();
+  renderImports();
+  toast(`${item.label} 기록을 되돌렸어요`);
 }
 
 // 반경 스프링: 살짝 넘쳤다가 자리 잡는다
@@ -219,7 +317,7 @@ const map = new maplibregl.Map({
   style: createMapStyle(),
   center: [state.player.lng, state.player.lat],
   zoom: 16.2,
-  minZoom: 12,
+  minZoom: 4, // 여러 도시에 걸친 기록도 한눈에 (블롭은 frameForFog에서 묶고 최소 크기를 둔다)
   maxZoom: 18.5,
   pitchWithRotate: false,
   dragRotate: false,
@@ -241,15 +339,37 @@ function frameForFog() {
   const world = 512 * Math.pow(2, map.getZoom());
   const ppm = world / (EARTH_C * Math.cos((c.lat * Math.PI) / 180));
   const t = now();
-  const rBase = REVEAL_RADIUS_M * ppm;
+  const rBase = Math.max(REVEAL_RADIUS_M * ppm, MIN_BLOB_PX);
   const margin = rBase * 3.6;
+  // 크게 축소하면 블롭 하나가 몇 px뿐이라 화면 안 지점 수만큼 그리면 느리다: 같은 작은 칸에 든 것은 하나만 그린다
+  const merge = rBase < MERGE_BLOB_PX ? new Set() : null;
+  const bucket = rBase * 0.6;
 
   if (blobBuf.length < state.points.length * 3) blobBuf = new Float32Array(state.points.length * 6);
+  // 화면(+여유)에 드는 메르카토르 범위의 타일만 본다. 크게 축소해 타일이 지점 묶음보다 많으면 묶음을 훑는다
+  const mx0 = cmx + (-margin - cp.x) / world, mx1 = cmx + (w + margin - cp.x) / world;
+  const my0 = cmy + (-margin - cp.y) / world, my1 = cmy + (h + margin - cp.y) / world;
+  const tx0 = Math.floor(mx0 * INDEX_LEVEL), tx1 = Math.floor(mx1 * INDEX_LEVEL);
+  const ty0 = Math.floor(my0 * INDEX_LEVEL), ty1 = Math.floor(my1 * INDEX_LEVEL);
+  const lists = [];
+  if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) <= index.size) {
+    for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+      const list = index.get(tileKey(tx, ty));
+      if (list) lists.push(list);
+    }
+  } else {
+    lists.push(...index.values());
+  }
   let n = 0;
-  for (const p of state.points) {
+  for (const list of lists) for (const p of list) {
     const x = (p.mx - cmx) * world + cp.x;
     const y = (p.my - cmy) * world + cp.y;
     if (x < -margin || y < -margin || x > w + margin || y > h + margin) continue;
+    if (merge) {
+      const key = Math.floor(x / bucket) * 100003 + Math.floor(y / bucket);
+      if (merge.has(key)) continue;
+      merge.add(key);
+    }
     const r = rBase * growth(t - p.born);
     if (r <= 0.01) continue;
     blobBuf[n * 3] = x; blobBuf[n * 3 + 1] = y; blobBuf[n * 3 + 2] = r;
@@ -402,6 +522,8 @@ function startGeo() {
   $('btn-locate').classList.add('on');
   state.geoWatch = navigator.geolocation.watchPosition(
     (pos) => {
+      // 실내·건물 사이에서 튀는 부정확한 위치는 따라가지 않는다
+      if (pos.coords.accuracy > GEO_MAX_ACCURACY_M) return;
       const ll = { lng: pos.coords.longitude, lat: pos.coords.latitude };
       const first = !state.target && distM(state.player, ll) > 2000;
       state.target = { ...ll, dist: distM(state.player, ll) };
@@ -425,10 +547,13 @@ $('btn-locate').addEventListener('click', () => (state.geoWatch === null ? start
 $('btn-reset').addEventListener('click', () => {
   if (!confirm('지금까지 밝힌 지도를 모두 지우고 다시 안개로 덮을까요?')) return;
   state.points = [];
+  state.imports = [];
   state.cells.clear();
   occupied.clear();
+  index.clear();
   lastSample = null;
   state.walkedM = 0;
+  renderImports();
   state.origin = { ...state.player };
   reveal(state.player);
   scheduleSave();
@@ -437,7 +562,27 @@ $('btn-reset').addEventListener('click', () => {
 
 // 가져오기 시트 · 드래그 앤 드롭
 const sheet = $('import-sheet');
-const openSheet = () => { sheet.hidden = false; keys.clear(); $('import-drop').focus(); };
+const openSheet = () => { sheet.hidden = false; keys.clear(); renderImports(); $('import-drop').focus(); };
+
+function renderImports() {
+  const list = $('import-list');
+  list.replaceChildren(...state.imports.slice().reverse().map((item) => {
+    const li = document.createElement('li');
+    const count = state.points.reduce((n, p) => n + (p.src === item.id ? 1 : 0), 0);
+    const when = new Date(item.at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+    const text = document.createElement('span');
+    text.textContent = `${item.label} · ${when} · ${count.toLocaleString('ko-KR')}곳`;
+    const undo = document.createElement('button');
+    undo.type = 'button';
+    undo.textContent = '되돌리기';
+    undo.addEventListener('click', () => {
+      if (confirm(`${item.label}에서 밝힌 곳을 다시 안개로 덮을까요? 걸어서 밝힌 곳은 그대로 남아요.`)) undoImport(item.id);
+    });
+    li.append(text, undo);
+    return li;
+  }));
+  $('import-history').hidden = state.imports.length === 0;
+}
 const closeSheet = () => { sheet.hidden = true; };
 $('btn-import').addEventListener('click', openSheet);
 $('import-close').addEventListener('click', closeSheet);
@@ -527,6 +672,7 @@ function applyCells(buf) {
     state.points = [];
     state.cells.clear();
     occupied.clear();
+    index.clear();
   } else if (kind !== CELLS_ADD) {
     console.warn('알 수 없는 칸 메시지', kind);
     return;
@@ -650,12 +796,11 @@ map.on('load', () => {
   if (APP) {
     // 칸과 위치는 앱이 보내 준다
   } else if (save?.points?.length) {
-    // 저장된 지점은 캐릭터에서 가까운 순으로 차례차례 걷힌다
-    for (const [lng, lat] of save.points) {
-      const d = distM(state.player, { lng, lat });
-      reveal({ lng, lat }, t0 + 0.4 + Math.min(d / 1500, 1.6));
-    }
-    toast(`다시 오셨네요! ${save.points.length.toLocaleString('ko-KR')}곳의 기억을 불러왔어요`);
+    // 저장된 지점은 캐릭터에서 가까운 순으로 차례차례 걷힌다 (밝힐 때 이미 중복을 걸렀으므로 그대로 싣는다)
+    state.imports = save.imports;
+    for (const q of save.points) reveal(q, t0 + 0.4 + Math.min(distM(state.player, q) / 1500, 1.6), q.src);
+    if (save.v !== 2) scheduleSave();
+    toast(`다시 오셨네요! ${state.points.length.toLocaleString('ko-KR')}곳의 기억을 불러왔어요`);
   } else {
     reveal(state.player, t0 + 0.5);
     toast('방향키나 WASD로 걸어 보세요. 지도를 누르면 그곳까지 걸어가요');
@@ -664,13 +809,17 @@ map.on('load', () => {
 
   native.markReady();
 
-  // 걷는 중이거나 걷힘 연출이 남아 있으면 매 프레임, 아니면 안개가 천천히 일렁이는 정도로만 다시 그린다
-  let last = now(), lastPaint = 0;
+  // 걷는 중이거나 걷힘 연출이 남아 있으면 매 프레임, 아니면 안개가 천천히 일렁이는 정도로만 다시 그린다.
+  // 그마저 한동안 아무 일이 없으면 별 반짝임만 남기고 더 드물게 그린다(배터리)
+  let last = now(), lastPaint = 0, lastBusy = now();
+  map.on('move', () => { lastBusy = now(); });
   const tick = () => {
     const t = now();
     if (update(Math.min(t - last, 0.05))) activeUntil = Math.max(activeUntil, t + 0.3);
     last = t;
-    if (t < activeUntil || t - lastPaint >= 1 / IDLE_FPS) {
+    if (t < activeUntil) lastBusy = t;
+    const idleFps = t - lastBusy > DEEP_IDLE_AFTER_S ? DEEP_IDLE_FPS : IDLE_FPS;
+    if (t < activeUntil || t - lastPaint >= 1 / idleFps) {
       updateHud();
       map.triggerRepaint();
       lastPaint = t;
@@ -681,6 +830,18 @@ map.on('load', () => {
 });
 
 // ?debug: 개발 중 콘솔에서 시뮬레이션을 직접 돌릴 수 있게 노출
-if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles, frameForFog };
+if (new URLSearchParams(location.search).has('debug')) window.__mist = { state, update, keys, map, importFiles, undoImport, frameForFog };
 
-map.on('error', (e) => console.warn('지도 오류', e.error ?? e));
+// 지도 타일을 계속 못 받으면(오프라인·OpenFreeMap 장애) 빈 지도만 보이지 않게 알린다. 밤안개와 밝힌 곳은 그대로 그린다
+let tileErrors = [];
+let tileToastAt = -Infinity;
+map.on('error', (e) => {
+  console.warn('지도 오류', e.error ?? e);
+  if (!e.sourceId && !e.tile) return;
+  const t = now();
+  tileErrors = tileErrors.filter((x) => t - x < 10).concat(t);
+  if (tileErrors.length >= 3 && t - tileToastAt > 60) {
+    tileToastAt = t;
+    toast('지도를 불러오지 못하고 있어요. 인터넷 연결을 확인해 주세요');
+  }
+});
