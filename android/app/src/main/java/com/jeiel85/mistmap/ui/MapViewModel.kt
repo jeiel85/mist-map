@@ -31,6 +31,7 @@ import android.os.PowerManager
 import com.jeiel85.mistmap.data.GpxExporter
 import com.jeiel85.mistmap.tracking.DayDiagnostics
 import com.jeiel85.mistmap.tracking.Diagnostics
+import com.jeiel85.mistmap.tracking.Gap
 import com.jeiel85.mistmap.data.ImportSummary
 import com.jeiel85.mistmap.importers.HistoryParser
 import com.jeiel85.mistmap.importers.ImportException
@@ -353,6 +354,12 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
 
   /** 오늘 기록 상태 (기록 모음 시트를 열 때 읽는다) */
   fun diagnostics(): DayDiagnostics = diagnosticsStore.today()
+
+  /** 기록이 끊긴 곳을 지도에서 보여 준다 */
+  fun showGap(gap: Gap) {
+    val at = gap.at ?: return
+    bridge?.sendMark(at, "${gap.time} 위치가 끊긴 곳")
+  }
 
   /** 휴대폰 절전(배터리 최적화)이 이 앱을 제한하는지. 제한되면 기록이 끊길 수 있다 */
   fun batteryRestricted(): Boolean {

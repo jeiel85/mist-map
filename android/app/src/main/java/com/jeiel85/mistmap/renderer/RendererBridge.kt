@@ -10,6 +10,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.jeiel85.mistmap.MistApp
 import com.jeiel85.mistmap.reveal.CellGrid
+import com.jeiel85.mistmap.reveal.LatLng
 import com.jeiel85.mistmap.tracking.Fix
 import org.json.JSONObject
 import java.nio.ByteBuffer
@@ -39,6 +40,10 @@ class RendererBridge private constructor(private val port: WebMessagePortCompat)
     JSONObject().put("type", "fit")
       .put("south", south).put("west", west).put("north", north).put("east", east),
   )
+
+  /** 그 자리로 카메라를 옮기고 표시한다 (기록이 끊긴 곳). */
+  fun sendMark(at: LatLng, label: String) =
+    post(JSONObject().put("type", "mark").put("lng", at.lng).put("lat", at.lat).put("label", label))
 
   /** 앱 HUD가 가리는 위·아래 높이 (dp = WebView CSS px). */
   fun sendInsets(topDp: Int, bottomDp: Int) =

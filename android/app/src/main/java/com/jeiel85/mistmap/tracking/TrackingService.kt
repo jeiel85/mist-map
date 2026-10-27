@@ -21,7 +21,6 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.jeiel85.mistmap.MistApp
 import com.jeiel85.mistmap.data.todayDistance
-import com.jeiel85.mistmap.reveal.Geo
 import com.jeiel85.mistmap.reveal.LatLng
 import com.jeiel85.mistmap.reveal.RevealTrail
 import kotlinx.coroutines.Job
@@ -65,8 +64,7 @@ class TrackingService : LifecycleService() {
   /** 활동 인식이 켜져 있으면 멈춤(STILL_GPS)은 곧 쉬기로 넘어가므로 GPS 간격을 더 늘린다 */
   private var activityRecognition = false
   private var sleepWatch: Job? = null
-  /** 쉬기에 들어간 뒤 처음 확인한 위치. 기록 시작 직후라 받아들인 위치가 없을 때 비교 기준이 된다 */
-  private var sleepAnchor: LatLng? = null
+  private val sleepWake = SleepWake(WAKE_DISTANCE_M)
   private var sleeping = false
   private var sessionId: Long? = null
   private var sessionDay: LocalDate? = null
@@ -78,6 +76,22 @@ class TrackingService : LifecycleService() {
     override fun onLocationResult(result: LocationResult) {
       for (location in result.locations) events.trySend(Event.Located(location.toFix()))
     }
+  }
+
+  /** 쉬는 동안 다른 앱(지도·날씨 등)이 받은 위치를 곁에서 듣는다. GPS를 따로 켜지 않는다 */
+  private val passive = object : LocationCallback() {
+    override fun onLocationResult(result: LocationResult) {
+      val here = result.lastLocation ?: return
+      if (sleeping && isRecording() && wakeIfMoved(here)) Log.i(MistApp.TAG, "다른 앱이 받은 위치로 깨움")
+    }
+  }
+
+  /** 쉬는 동안 받은 위치가 잠들기 전 자리에서 멀면 깨운다 */
+  private fun wakeIfMoved(here: Location): Boolean {
+    val accuracy = if (here.hasAccuracy()) here.accuracy else Float.MAX_VALUE
+    val moved = sleepWake.offer(LatLng(here.latitude, here.longitude), accuracy, TrackingState.lastFix.value?.latLng)
+    if (moved) events.trySend(Event.Wake)
+    return moved
   }
 
   override fun onCreate() {
@@ -209,7 +223,7 @@ class TrackingService : LifecycleService() {
     if (!isRecording()) return
     account()
     fused.removeLocationUpdates(callback)
-    sleepWatch?.cancel()
+    stopSleepWatch()
     setStatus(TrackingState.Status.PAUSED)
     gaps.pause()
     TrackingState.warning.value = null
@@ -264,17 +278,27 @@ class TrackingService : LifecycleService() {
       val now = System.currentTimeMillis()
       account(now)
       if (gaps.check(now, policy.plan)) {
-        diagnostics.addGap(now)
+        // 끊기기 직전 위치: 이번 기록에서 받아들인 마지막 위치 (지난 기록의 위치는 쓰지 않는다)
+        diagnostics.addGap(now, TrackingState.lastFix.value?.takeIf { lastFixAt > 0 }?.latLng)
         TrackingState.warning.value = "위치를 받지 못하고 있어요"
         Log.w(MistApp.TAG, "위치가 ${gaps.silentForMs(now) / 1000}초째 안 옴")
       }
     }
   }
 
-  /** 쉬는 동안(GPS 끔) 5분마다 위치를 한 번만 확인해, 활동 인식이 놓친 이동을 잡는다 */
+  /**
+   * 쉬는 동안(GPS 끔) 활동 인식이 놓친 이동을 잡는다. 다른 앱이 받은 위치를 곁에서 듣고,
+   * 그런 위치가 없을 때를 위해 5분마다 한 번은 직접 확인한다.
+   */
   @SuppressLint("MissingPermission") // hasLocationPermission()으로 확인
   private fun watchWhileSleeping() {
-    sleepWatch?.cancel()
+    stopSleepWatch()
+    sleepWake.reset()
+    fused.requestLocationUpdates(
+      LocationRequest.Builder(Priority.PRIORITY_PASSIVE, PASSIVE_INTERVAL_MS).setMinUpdateIntervalMillis(PASSIVE_INTERVAL_MS).build(),
+      passive,
+      Looper.getMainLooper(),
+    ).addOnFailureListener { e -> Log.w(MistApp.TAG, "쉬는 중 곁에서 듣기 실패, 5분 확인만 씀", e) }
     sleepWatch = lifecycleScope.launch {
       while (true) {
         delay(SLEEP_CHECK_MS)
@@ -285,20 +309,19 @@ class TrackingService : LifecycleService() {
           Log.w(MistApp.TAG, "쉬는 중 위치 확인 실패", e)
           null
         } ?: continue
-        val point = LatLng(here.latitude, here.longitude)
-        val anchor = TrackingState.lastFix.value?.latLng ?: sleepAnchor
-        if (anchor == null) {
-          sleepAnchor = point
-          continue
-        }
-        if (Geo.distanceM(anchor, point) > WAKE_DISTANCE_M) events.trySend(Event.Wake)
+        wakeIfMoved(here)
       }
     }
   }
 
+  private fun stopSleepWatch() {
+    sleepWatch?.cancel()
+    fused.removeLocationUpdates(passive)
+  }
+
   private suspend fun finish() {
     account()
-    sleepWatch?.cancel()
+    stopSleepWatch()
     ActivityTransitions.stop(this)
     TrackingState.warning.value = null
     fused.removeLocationUpdates(callback)
@@ -350,11 +373,10 @@ class TrackingService : LifecycleService() {
       gaps.pause()
       TrackingState.warning.value = null
       sleeping = true
-      sleepAnchor = null
       watchWhileSleeping()
       return
     }
-    sleepWatch?.cancel()
+    stopSleepWatch()
     if (sleeping) {
       // 쉬는 동안 어떻게 움직였는지 모르니(차로 몇 백 m 갔을 수도) 깨어난 첫 위치를 잠들기 전 점과 잇지 않는다
       sleeping = false
@@ -376,6 +398,7 @@ class TrackingService : LifecycleService() {
 
   override fun onDestroy() {
     fused.removeLocationUpdates(callback)
+    fused.removeLocationUpdates(passive)
     ActivityTransitions.stop(this)
     // 시스템이 서비스를 내리는 경우: 상태 기록은 남겨 두어 다음 실행이 끊김을 알 수 있게 한다
     TrackingState.status.value = TrackingState.Status.OFF
@@ -390,6 +413,8 @@ class TrackingService : LifecycleService() {
 
     private const val SLEEP_CHECK_MS = 5 * 60_000L
     private const val WAKE_DISTANCE_M = 100.0
+    /** 곁에서 듣는 위치를 이보다 자주 받지 않는다 (깨우는 데는 충분하다) */
+    private const val PASSIVE_INTERVAL_MS = 30_000L
 
     fun intent(context: Context, action: String) =
       Intent(context, TrackingService::class.java).setAction(action)

@@ -2,6 +2,7 @@ package com.jeiel85.mistmap.tracking
 
 import android.content.Context
 import androidx.core.content.edit
+import com.jeiel85.mistmap.reveal.LatLng
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -15,9 +16,27 @@ data class DayDiagnostics(
   val sleepMs: Long,
   /** 위치를 2분 넘게 받지 못한 횟수 */
   val gaps: Int,
-  /** 끊기기 시작한 시각 ("HH:mm", 최근 10개) */
-  val gapTimes: List<String> = emptyList(),
+  /** 끊기기 시작한 때 (최근 10개) */
+  val gapList: List<Gap> = emptyList(),
 )
+
+/** 위치가 끊기기 시작한 시각("HH:mm")과 그 직전에 받은 위치. 기록 시작 직후 끊겼으면 위치가 없다 */
+data class Gap(val time: String, val at: LatLng?) {
+  fun encode() = if (at == null) time else "$time@${"%.5f".format(java.util.Locale.ROOT, at.lat)};${"%.5f".format(java.util.Locale.ROOT, at.lng)}"
+
+  companion object {
+    /** "HH:mm" (위치를 남기기 전 형식) 또는 "HH:mm@위도;경도" */
+    fun decode(text: String): Gap {
+      val (time, where) = text.split('@', limit = 2).let { it[0] to it.getOrNull(1) }
+      val at = where?.split(';')?.takeIf { it.size == 2 }?.let { (lat, lng) ->
+        val la = lat.toDoubleOrNull()
+        val ln = lng.toDoubleOrNull()
+        if (la != null && ln != null) LatLng(la, ln) else null
+      }
+      return Gap(time, at)
+    }
+  }
+}
 
 /**
  * 하루 단위 누적값을 기기 안(SharedPreferences)에만 둔다. 위치 자체는 담지 않는다.
@@ -38,10 +57,11 @@ class Diagnostics(context: Context, private val zone: ZoneId = ZoneId.systemDefa
     }
   }
 
-  fun addGap(at: Long = System.currentTimeMillis()) {
+  /** @param where 끊기기 직전에 받은 위치 (기기 안에만 남는다) */
+  fun addGap(at: Long = System.currentTimeMillis(), where: LatLng? = null) {
     val day = dayOf(at)
     val time = Instant.ofEpochMilli(at).atZone(zone).toLocalTime().toString().take(5)
-    val times = (prefs.getString("$day.gapTimes", "")!!.split(',').filter { it.isNotEmpty() } + time).takeLast(10)
+    val times = (gapEntries(day) + Gap(time, where).encode()).takeLast(10)
     prefs.edit {
       putInt("$day.gaps", prefs.getInt("$day.gaps", 0) + 1)
       putString("$day.gapTimes", times.joinToString(","))
@@ -56,9 +76,11 @@ class Diagnostics(context: Context, private val zone: ZoneId = ZoneId.systemDefa
       gpsMs = prefs.getLong("$day.gps", 0),
       sleepMs = prefs.getLong("$day.sleep", 0),
       gaps = prefs.getInt("$day.gaps", 0),
-      gapTimes = prefs.getString("$day.gapTimes", "")!!.split(',').filter { it.isNotEmpty() },
+      gapList = gapEntries(day).map(Gap::decode),
     )
   }
+
+  private fun gapEntries(day: String) = prefs.getString("$day.gapTimes", "")!!.split(',').filter { it.isNotEmpty() }
 
   private fun dayOf(at: Long) = Instant.ofEpochMilli(at).atZone(zone).toLocalDate().toString()
 

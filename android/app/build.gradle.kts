@@ -34,8 +34,8 @@ android {
     applicationId = "com.jeiel85.mistmap"
     minSdk = 26
     targetSdk = 36
-    versionCode = 5
-    versionName = "0.7.0"
+    versionCode = 6
+    versionName = "0.8.0"
   }
 
   // 업로드 키는 저장소 밖(.keystore/, git 제외)에 둔다. 백업: G:\내 드라이브\모바일 앱 개발\Mist Map\릴리즈 키스토어

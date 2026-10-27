@@ -193,6 +193,22 @@ kbd {
 .pin.drop .pin-head { animation: drop 0.5s cubic-bezier(.3,1.6,.5,1); }
 @keyframes drop { from { transform: translateY(-24px); opacity: 0; } }
 
+/* ---- 기록이 끊긴 곳: 꺼진 등불 ---- */
+.mark { display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+.mark-label {
+  margin-top: 4px; padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  font: 13px var(--font-body); color: var(--ink); background: var(--paper-hi);
+  border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.mark-label:empty { display: none; }
+.mark-lamp {
+  width: 16px; height: 20px; border-radius: 7px 7px 8px 8px;
+  background: radial-gradient(circle at 50% 45%, #6b6a8f, #3b3a5c 75%);
+  border: 2px solid var(--pink); box-shadow: 0 0 12px 2px rgba(242, 158, 142, 0.35);
+  animation: mark-blink 2.4s ease-in-out infinite;
+}
+@keyframes mark-blink { 50% { box-shadow: 0 0 4px 1px rgba(242, 158, 142, 0.15); } }
+
 /* ---- 밝힐 때 흩어지는 불티 ---- */
 .puff {
   width: 7px; height: 7px; pointer-events: none; border-radius: 50%;
