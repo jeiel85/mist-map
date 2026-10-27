@@ -1,5 +1,6 @@
 // 가져오기 흐름 점검: node tools/e2e-import.cjs [URL] [스크린샷 폴더]
-// 샘플 가져오기 → 같은 파일 재가져오기(중복 0) → 잘못된 파일 안내 → 새로고침 후 유지 → 콘솔 오류 없음
+// 샘플 가져오기 → 같은 파일 재가져오기(중복 0) → 잘못된 파일 안내 → 새로고침 후 유지
+// → 시트에서 파일 하나 되돌리기(새로고침 후에도 유지) → 예전 저장 형식(v1) 옮기기 → 콘솔 오류 없음
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { launch } = require('./playwright.cjs');
@@ -38,6 +39,33 @@ const SAMPLES = path.join(__dirname, '..', 'samples');
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForTimeout(1500);
   assert.equal(await page.textContent('#stat-spots'), spots, '새로고침 후 기록이 유지되어야 함');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('mistmap:v2')).v), 2, '압축 형식(v2)으로 저장');
+
+  // 파일마다 되돌리기: GPX를 되돌리면 그 파일이 새로 밝힌 곳만 사라진다
+  await page.click('#btn-import');
+  const rows = await page.$$eval('#import-list li span', (els) => els.map((e) => e.textContent));
+  assert.equal(rows.length, 2, `가져온 파일 두 개가 목록에 있어야 함: ${rows}`);
+  page.once('dialog', (d) => d.accept());
+  const gpxRow = rows.findIndex((r) => r.startsWith('GPX'));
+  await page.click(`#import-list li:nth-child(${gpxRow + 1}) button`);
+  assert.match(await toastAfter(300), /GPX · seongsu-walk\.gpx 기록을 되돌렸어요/);
+  await page.click('#import-close');
+  const afterUndo = await page.textContent('#stat-spots');
+  assert.ok(Number(afterUndo.replace(/,/g, '')) < Number(spots.replace(/,/g, '')), '되돌리면 발자국이 줄어야 함');
+  await page.waitForTimeout(1200);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  assert.equal(await page.textContent('#stat-spots'), afterUndo, '되돌린 결과가 새로고침 후에도 유지');
+
+  // 예전 형식(v1)은 읽어서 다음 저장 때 v2로 옮긴다
+  await page.evaluate(() => {
+    localStorage.removeItem('mistmap:v2');
+    localStorage.setItem('mistmap:v1', JSON.stringify({ origin: { lng: 127.056, lat: 37.5446 }, player: { lng: 127.056, lat: 37.5446 }, walkedM: 10, points: [[127.056, 37.5446], [127.057, 37.5446]] }));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
+  assert.equal(await page.textContent('#stat-spots'), '2', 'v1 저장을 읽어야 함');
+  assert.deepEqual(await page.evaluate(() => [!!localStorage.getItem('mistmap:v2'), localStorage.getItem('mistmap:v1')]), [true, null], 'v2로 옮겨야 함');
 
   assert.deepEqual(errors, [], '콘솔 오류가 없어야 함');
   console.log(`ok · ${first} · 발자국 ${spots}`);

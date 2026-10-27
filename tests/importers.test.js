@@ -121,3 +121,59 @@ test('UTF-8 BOM이 붙은 파일도 읽는다', () => {
   const r = parseHistory('﻿<gpx><wpt lat="1" lon="2"/></gpx>');
   near(r.tracks[0][0], 1, 2);
 });
+
+test('구글 타임라인: 차량·대중교통 구간은 빼고 그 시간대의 경로는 끊는다', () => {
+  const r = parseHistory(JSON.stringify({
+    semanticSegments: [
+      {
+        startTime: '2026-10-01T09:00:00.000+09:00', endTime: '2026-10-01T09:30:00.000+09:00',
+        timelinePath: [
+          { point: '37.50°, 127.00°', time: '2026-10-01T09:00:00.000+09:00' },
+          { point: '37.51°, 127.01°', time: '2026-10-01T09:05:00.000+09:00' },
+          { point: '37.60°, 127.10°', time: '2026-10-01T09:15:00.000+09:00' }, // 버스 안
+          { point: '37.70°, 127.20°', time: '2026-10-01T09:25:00.000+09:00' },
+        ],
+      },
+      {
+        startTime: '2026-10-01T09:10:00.000+09:00', endTime: '2026-10-01T09:20:00.000+09:00',
+        activity: { start: { latLng: '37.51°, 127.01°' }, end: { latLng: '37.69°, 127.19°' }, topCandidate: { type: 'IN_BUS', probability: 0.8 } },
+      },
+      {
+        startTime: '2026-10-01T09:20:00.000+09:00', endTime: '2026-10-01T09:30:00.000+09:00',
+        activity: { start: { latLng: '37.69°, 127.19°' }, end: { latLng: '37.70°, 127.20°' }, topCandidate: { type: 'WALKING' } },
+      },
+    ],
+  }));
+  // 경로가 버스 시간대에서 둘로 나뉘고(2점 + 1점), 버스 활동은 빠지고, 걷기 활동은 남는다
+  assert.deepEqual(r.tracks.map((t) => t.length), [2, 1, 2]);
+  assert.equal(r.vehicleSkipped, 1);
+});
+
+test('구글 타임라인 iOS·테이크아웃: 차량 구간 빼기', () => {
+  const ios = parseHistory(JSON.stringify([
+    { startTime: '2026-10-01T09:00:00Z', endTime: '2026-10-01T09:20:00Z', activity: { start: 'geo:37.5,127.0', end: 'geo:37.6,127.1', topCandidate: { type: 'in passenger vehicle' } } },
+    { startTime: '2026-10-01T09:00:00Z', timelinePath: [
+      { point: 'geo:37.50,127.00', durationMinutesOffsetFromStartTime: '10' }, // 차 안
+      { point: 'geo:37.61,127.11', durationMinutesOffsetFromStartTime: '30' },
+    ] },
+  ]));
+  assert.deepEqual(ios.tracks.map((t) => t.length), [1]);
+  assert.equal(ios.vehicleSkipped, 1);
+
+  const sem = parseHistory(JSON.stringify({ timelineObjects: [
+    { activitySegment: { activityType: 'IN_SUBWAY',
+      startLocation: { latitudeE7: 375000000, longitudeE7: 1270000000 }, endLocation: { latitudeE7: 376000000, longitudeE7: 1271000000 } } },
+    { activitySegment: { activityType: 'WALKING',
+      startLocation: { latitudeE7: 376000000, longitudeE7: 1271000000 }, endLocation: { latitudeE7: 376010000, longitudeE7: 1271010000 } } },
+  ] }));
+  assert.deepEqual(sem.tracks.map((t) => t.length), [2]);
+  assert.equal(sem.vehicleSkipped, 1);
+
+  const rec = parseHistory(JSON.stringify({ locations: [
+    { latitudeE7: 375000000, longitudeE7: 1270000000 },
+    { latitudeE7: 375100000, longitudeE7: 1270100000, activity: [{ activity: [{ type: 'IN_VEHICLE', confidence: 90 }] }] },
+    { latitudeE7: 375200000, longitudeE7: 1270200000 },
+  ] }));
+  assert.deepEqual(rec.tracks.map((t) => t.length), [1, 1]);
+  assert.equal(rec.vehicleSkipped, 1);
+});
