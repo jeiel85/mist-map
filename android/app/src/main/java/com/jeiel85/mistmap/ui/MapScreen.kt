@@ -194,6 +194,7 @@ fun MapScreen(
         diagnostics = vm.diagnostics(),
         batteryRestricted = vm.batteryRestricted(),
         onOpenBatterySettings = onOpenBatterySettings,
+        onShowGap = { showRecords = false; vm.showGap(it) },
         simpleAfterSec = simpleAfter,
         onSimpleAfterChange = vm::setSimpleAfter,
       )

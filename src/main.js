@@ -647,6 +647,7 @@ map.on('click', (e) => {
 //   앱 → 웹: 칸 묶음 ArrayBuffer (WebView가 지원하지 않으면 같은 바이트를 {type:'cells', b64})
 //            [u8 종류(1=전체, 2=추가), 3바이트 비움, (u32 x, u32 y) 리틀 엔디언 반복]
 //            {type:'player', lng, lat}, {type:'insets', top, bottom}, {type:'fit', south, west, north, east}
+//            {type:'mark', lng, lat, label}: 그 자리로 카메라를 옮기고 표시한다(기록이 끊긴 곳). lng가 없으면 표시를 지운다
 //   웹 → 앱: {type:'ready'}, {type:'error', message}
 const CELLS_SET = 1, CELLS_ADD = 2;
 const CELL_N = 2 ** CELL_LEVEL;
@@ -718,6 +719,22 @@ function fitTo({ south, west, north, east }) {
   map.fitBounds([[west, south], [east, north]], { padding: 60, maxZoom: 16.2, duration: 1400 });
 }
 
+// 기록이 끊긴 곳 표시: 꺼진 등불 하나와 시각. 누르면 사라진다
+const markEl = document.createElement('div');
+markEl.className = 'mark';
+markEl.innerHTML = '<div class="mark-lamp"></div><div class="mark-label"></div>';
+// 반디(위로 그려짐)와 겹치지 않게 지점 아래로 늘어뜨린다
+const mark = new maplibregl.Marker({ element: markEl, anchor: 'top' });
+markEl.addEventListener('click', () => mark.remove());
+$('btn-follow').addEventListener('click', () => mark.remove()); // 다시 따라가면 내려 둔다
+function showMark({ lng, lat, label = '' }) {
+  if (lng == null || lat == null) { mark.remove(); return; }
+  markEl.querySelector('.mark-label').textContent = label;
+  mark.setLngLat([lng, lat]).addTo(map);
+  state.follow = false;
+  map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 16), duration: 1400 });
+}
+
 function base64ToBuffer(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -744,6 +761,7 @@ const native = (() => {
       if (msg.type === 'player') movePlayer(msg);
       else if (msg.type === 'insets') setInsets(msg);
       else if (msg.type === 'fit') fitTo(msg);
+      else if (msg.type === 'mark') showMark(msg);
       else if (msg.type === 'cells') applyCells(base64ToBuffer(msg.b64));
       else console.warn('알 수 없는 앱 메시지', msg.type);
     } catch (e) {

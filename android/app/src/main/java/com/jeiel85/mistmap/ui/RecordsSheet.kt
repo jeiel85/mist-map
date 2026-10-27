@@ -3,6 +3,8 @@ package com.jeiel85.mistmap.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.PaddingValues
 import com.jeiel85.mistmap.data.ImportSummary
 import com.jeiel85.mistmap.tracking.DayDiagnostics
+import com.jeiel85.mistmap.tracking.Gap
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -58,6 +61,7 @@ fun RecordsSheet(
   diagnostics: DayDiagnostics,
   batteryRestricted: Boolean,
   onOpenBatterySettings: () -> Unit,
+  onShowGap: (Gap) -> Unit,
   simpleAfterSec: Int,
   onSimpleAfterChange: (Int) -> Unit,
 ) {
@@ -90,7 +94,7 @@ fun RecordsSheet(
       busy?.let { Text(it, fontSize = 13.sp, color = Mist.Firefly, modifier = Modifier.padding(top = 10.dp)) }
 
       Spacer(Modifier.height(18.dp))
-      DiagnosticsCard(diagnostics, batteryRestricted, onOpenBatterySettings)
+      DiagnosticsCard(diagnostics, batteryRestricted, onOpenBatterySettings, onShowGap)
 
       Spacer(Modifier.height(18.dp))
       SimpleModeSetting(simpleAfterSec, onSimpleAfterChange)
@@ -139,7 +143,12 @@ fun RecordsSheet(
 
 /** 오늘 기록 상태: 하루 종일 기록이 끊기지 않았는지, GPS를 얼마나 켰는지 (M3) */
 @Composable
-private fun DiagnosticsCard(d: DayDiagnostics, batteryRestricted: Boolean, onOpenBatterySettings: () -> Unit) {
+private fun DiagnosticsCard(
+  d: DayDiagnostics,
+  batteryRestricted: Boolean,
+  onOpenBatterySettings: () -> Unit,
+  onShowGap: (Gap) -> Unit,
+) {
   Text("오늘 기록 상태", style = TextStyle(fontFamily = Mist.Hand, fontSize = 20.sp, color = Mist.Moon))
   GlowBox(Modifier.fillMaxWidth().padding(top = 6.dp), shape = RoundedCornerShape(16.dp)) {
     Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -149,13 +158,30 @@ private fun DiagnosticsCard(d: DayDiagnostics, batteryRestricted: Boolean, onOpe
         Stat("쉬는 중", hm(d.sleepMs), Modifier.weight(1f))
         Stat("끊김", "${d.gaps}번", Modifier.weight(1f))
       }
-      if (d.gapTimes.isNotEmpty()) {
+      if (d.gapList.isNotEmpty()) {
         Text(
-          "위치가 끊긴 때: ${d.gapTimes.joinToString(", ")}",
+          if (d.gapList.any { it.at != null }) "위치가 끊긴 때 · 누르면 지도에서 보여요" else "위치가 끊긴 때",
           fontSize = 11.sp,
           color = Mist.MoonSoft,
           modifier = Modifier.padding(top = 6.dp),
         )
+        Row(
+          Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          for (gap in d.gapList.asReversed()) {
+            val where = gap.at != null
+            Text(
+              gap.time,
+              fontSize = 12.sp,
+              color = if (where) Mist.Moon else Mist.MoonSoft,
+              modifier = Modifier
+                .border(1.dp, if (where) Mist.Pink else Mist.Line, RoundedCornerShape(999.dp))
+                .then(if (where) Modifier.clickable(role = Role.Button, onClick = { onShowGap(gap) }) else Modifier)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+          }
+        }
       }
       if (batteryRestricted) {
         Text(
